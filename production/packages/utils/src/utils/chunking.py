@@ -1,10 +1,10 @@
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
+from utils.gemini_embeddings import GeminiEmbeddings
 
 chunker = SemanticChunker(
-    embeddings=OpenAIEmbeddings(
-        model="text-embedding-3-large"
+    embeddings=GeminiEmbeddings(
+        model="models/text-embedding-004"
     ),
     sentence_split_regex=r"<MESSAGE_SEP>",
     add_start_index=False

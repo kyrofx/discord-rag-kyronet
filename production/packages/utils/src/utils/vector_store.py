@@ -1,6 +1,6 @@
 from langchain_redis import RedisConfig, RedisVectorStore
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
+from utils.gemini_embeddings import GeminiEmbeddings
 import os
 
 
@@ -14,9 +14,8 @@ redis_config = RedisConfig(
 )
 
 vector_store = RedisVectorStore(
-    embeddings=OpenAIEmbeddings(
-        model="text-embedding-3-large",
-        chunk_size=50
+    embeddings=GeminiEmbeddings(
+        model="models/text-embedding-004"
     ),
     config=redis_config
 )
