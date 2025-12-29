@@ -19,7 +19,7 @@ To get started, you will need to get through the following steps:
 ## 1. Prerequisites
 
 - A [Discord Bot Token](https://discordjs.guide/preparations/setting-up-a-bot-application.html#your-bot-s-token)
-- An [OpenAI API Key](https://platform.openai.com/settings/)
+- A [Google AI API Key](https://aistudio.google.com/app/apikey) (for Gemini)
 - [Docker](https://www.docker.com/) (Recommended)
 - [Docker Compose](https://docs.docker.com/compose/) (Recommended)
 
@@ -31,7 +31,7 @@ First, you will need to export the messages from your Discord server to store th
 You can either use your existing MongoDB instance or get one by using the [docker-compose.yml](./docker-compose.yml) file.
 
 > [!IMPORTANT]  
-> Don't forget to set the required environment variables in the [.env](./initial_ingestion/src/.env) file.  
+> Don't forget to set the required environment variables in the [.env](./.env.example) file.  
 > You will need the IDs of the channels you want to export the messages from. (Comma-separated)  
 > You can get it by right-clicking on the channel and selecting "Copy ID" in Discord (you will need to enable Developer Mode in the settings).
 
@@ -59,8 +59,8 @@ docker-compose run initial_ingestion
 Now that the messages are stored in the database, we can start the indexing pipeline. This will create the necessary indexes and embeddings for the messages to be used by the model. We are using a [SemanticChunking](https://github.com/FullStackRetrieval-com/RetrievalTutorials/blob/a4570f3c4883eb9b835b0ee18990e62298f518ef/tutorials/LevelsOfTextSplitting/5_Levels_Of_Text_Splitting.ipynb) strategy to split the messages into chunks. This allows us to group consecutive messages of the same topic together to have a better representation of the context. At least that's the idea.
 
 > [!IMPORTANT]
-> Don't forget to set the required environment variables in the [.env](./production/indexing_pipeline/.env) file.  
-> You can let the default values if you want but you will need to set the `OPENAI_API_KEY`.
+> Don't forget to set the required environment variables in the [.env](./.env.example) file.  
+> You can let the default values if you want but you will need to set the `GOOGLE_API_KEY`.
 
 ```console
 cd ../ # go back to the root directory
@@ -80,8 +80,8 @@ docker-compose run indexing_pipeline
 We are now ready to launch the API that will allow us to interact with the model. The API receives a prompt from the user, retrieves the most relevant messages from the vector store, includes them in the prompt, and sends it to the model. The model then generates a response based on the context provided.  
 
 > [!IMPORTANT]  
-> Don't forget to set the required environment variables in the [.env](./production/api/.env) file.  
-> You can let the default values if you want but you will need to set the `OPENAI_API_KEY`.
+> Don't forget to set the required environment variables in the [.env](./.env.example) file.  
+> You can let the default values if you want but you will need to set the `GOOGLE_API_KEY`.
 
 ```console
 cd ../.. # go back to the root directory
@@ -90,20 +90,56 @@ docker-compose up api -d
 
 ### Using the API
 
-The API provides two endpoints:
+The API provides both legacy and v1 endpoints:
+
+#### Legacy Endpoints
 
 | Method | Endpoint | Description | Parameters |
 |--------|----------|-------------|------------|
 | GET | /health | Check if the API is running | |
 | POST | /infer | Generate a response based on the prompt | `text` (Multipart-FormData) |
 
+#### V1 API Endpoints (with authentication)
 
-- `/infer` will return a JSON response with the generated text.
+The v1 API requires authentication via API key (set `API_KEY` in .env). If not set, authentication is disabled.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /v1/health | Health check |
+| POST | /v1/query | Query with citations and metadata |
+| POST | /v1/messages | Real-time message ingestion webhook |
+| DELETE | /v1/guilds/{guild_id}/messages/{message_id} | Delete message from index |
+| GET | /v1/guilds/{guild_id}/stats | Get guild statistics |
+| GET | /v1/guilds/{guild_id}/channels | List indexed channels |
+
+#### Dashboard
+
+Access the dashboard at `http://localhost:8000/dashboard` to view:
+- Query statistics and metrics
+- Response time analytics
+- Hourly query distribution
+- Error tracking
+
+Default credentials (can be changed in .env):
+- Username: `admin`
+- Password: Set via `DASHBOARD_PASS` in .env
+
+
+- `/infer` will return a JSON response with the generated text and sources.
     ```json
     {
         "question": "Tell me what you know about the time we went to the beach last summer.",
         "context": ["...", "..."],
-        "answer": "When you went to the beach last summer, it was a sunny day and you had a lot of fun. You played volleyball and swam in the sea. You also had a picnic and watched the sunset. It was a great day!"
+        "answer": "When you went to the beach last summer, it was a sunny day and you had a lot of fun. You played volleyball and swam in the sea. You also had a picnic and watched the sunset. It was a great day!",
+        "sources": [
+            {
+                "source_number": 1,
+                "snippet": "alice: let's go to the beach...",
+                "urls": ["https://discord.com/channels/..."],
+                "timestamp": 1234567890,
+                "channel": "general"
+            }
+        ]
     }
     ```
 - `/health` will return a JSON response with the status of the API.
@@ -126,7 +162,7 @@ At this point the RAG application is ready to be used. Feel free to integrate it
 The Discord bot allows you to chat with the model directly in your Discord server. This way, everyone in your server can easily use the RAG application seamlessly. To interact with the bot, use the `/ask` command followed by the question you want to ask. The bot will then generate a response based on the context of the messages it has seen.
 
 > [!IMPORTANT]  
-> Don't forget to set the required environment variables in the [.env](./bot/src/.env) file.  
+> Don't forget to set the required environment variables in the [.env](./.env.example) file.  
 > You will need the `DISCORD_BOT_TOKEN` and the `DISCORD_BOT_CLIENT_ID`.  
 > You can find the CLIENT_ID of your bot in the [Discord Developer Portal](https://discord.com/developers/applications) (Named "Application ID").
 
