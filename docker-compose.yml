@@ -29,6 +29,9 @@ services:
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - REDIS_URL=${REDIS_URL:-redis://discord_rag_redis:6379}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://discord_rag_mongo:27017}
+      - MONGODB_DB=${MONGODB_DB:-discord_rag}
+      - MONGODB_COLLECTION=${MONGODB_COLLECTION:-messages}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
       - DASHBOARD_PASS=${DASHBOARD_PASS}
       - API_KEY=${API_KEY:-}
@@ -36,6 +39,7 @@ services:
       - discord_rag_network
     depends_on:
       - redis
+      - mongo
 
   bot:
     build:

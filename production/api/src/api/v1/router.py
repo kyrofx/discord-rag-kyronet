@@ -23,7 +23,7 @@ from v1.models import (
     GuildStatsResponse, DateRange,
     ChannelsResponse, ChannelInfo,
     EmbedRequest, EmbedResponse,
-    UserImportRequest, UserImportResponse,
+    UserImportRequest, UserImportStartResponse, UserImportStatusResponse,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -320,49 +320,113 @@ async def debug_embed(
 
 # ============== User Token Import ==============
 
-@router.post("/import/user-token", response_model=UserImportResponse)
+async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_messages: Optional[int]):
+    """Background task to run the import job."""
+    from user_import import run_import
+    import asyncio
+
+    try:
+        # Update status to running
+        redis_client.hset(f"discord_rag:import:{job_id}", mapping={
+            "status": "running",
+            "channel_id": channel_id,
+            "messages_imported": 0,
+            "messages_skipped": 0,
+        })
+
+        result = await run_import(
+            user_token=user_token,
+            channel_id=channel_id,
+            max_messages=max_messages
+        )
+
+        # Update with final results
+        redis_client.hset(f"discord_rag:import:{job_id}", mapping={
+            "status": "completed",
+            "channel_id": result["channel_id"],
+            "channel_type": result["channel_type"],
+            "channel_name": result.get("channel_name") or "",
+            "messages_imported": result["messages_imported"],
+            "messages_skipped": result["messages_skipped"],
+            "resumed_from": result.get("resumed_from") or "",
+            "completed_at": datetime.utcnow().isoformat(),
+        })
+
+    except Exception as e:
+        redis_client.hset(f"discord_rag:import:{job_id}", mapping={
+            "status": "failed",
+            "error": str(e),
+            "completed_at": datetime.utcnow().isoformat(),
+        })
+
+
+@router.post("/import/user-token", response_model=UserImportStartResponse)
 async def import_with_user_token(
     request: UserImportRequest,
+    background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Import messages from a Discord channel using a user account token.
+    Start importing messages from a Discord channel using a user account token.
 
-    This endpoint allows importing messages from DMs, Group DMs, or server
-    channels that the user account has access to. It automatically resumes
-    from the last imported message.
+    This runs as a background job - use GET /v1/import/{job_id} to check status.
 
-    WARNING: Using user tokens violates Discord's Terms of Service and may
-    result in account termination. Use at your own risk.
-
-    The import will:
-    - Skip bot messages and empty messages
-    - Resume from the last stored message (no duplicates)
-    - Build proper Discord URLs for citations (@me for DMs/Group DMs)
-    - Rate limit requests to avoid Discord API bans
+    WARNING: Using user tokens violates Discord's Terms of Service.
     """
-    from user_import import run_import
+    import asyncio
 
-    try:
-        result = await run_import(
-            user_token=request.user_token,
-            channel_id=request.channel_id,
-            max_messages=request.max_messages
-        )
+    job_id = str(uuid.uuid4())[:8]
 
-        return UserImportResponse(
-            status="completed",
-            channel_id=result["channel_id"],
-            channel_type=result["channel_type"],
-            channel_name=result.get("channel_name"),
-            messages_imported=result["messages_imported"],
-            messages_skipped=result["messages_skipped"],
-            resumed_from=result.get("resumed_from"),
-            oldest_message_id=result.get("oldest_message_id"),
-            newest_message_id=result.get("newest_message_id")
-        )
+    # Store initial job state
+    redis_client.hset(f"discord_rag:import:{job_id}", mapping={
+        "status": "starting",
+        "channel_id": request.channel_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "messages_imported": 0,
+        "messages_skipped": 0,
+    })
+    redis_client.expire(f"discord_rag:import:{job_id}", 86400)  # 24h TTL
 
-    except ValueError as e:
-        raise ValidationError(str(e))
-    except Exception as e:
-        raise InternalError(f"Import failed: {str(e)}")
+    # Start background task
+    background_tasks.add_task(
+        _run_import_job,
+        job_id,
+        request.user_token,
+        request.channel_id,
+        request.max_messages
+    )
+
+    return UserImportStartResponse(
+        status="started",
+        job_id=job_id,
+        channel_id=request.channel_id,
+        message="Import started. Check status at GET /v1/import/{job_id}"
+    )
+
+
+@router.get("/import/{job_id}", response_model=UserImportStatusResponse)
+async def get_import_status(
+    job_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Check the status of an import job.
+    """
+    job_data = redis_client.hgetall(f"discord_rag:import:{job_id}")
+
+    if not job_data:
+        raise NotFoundError(f"Import job {job_id} not found")
+
+    return UserImportStatusResponse(
+        job_id=job_id,
+        status=job_data.get("status", "unknown"),
+        channel_id=job_data.get("channel_id"),
+        channel_type=job_data.get("channel_type"),
+        channel_name=job_data.get("channel_name") or None,
+        messages_imported=int(job_data.get("messages_imported", 0)),
+        messages_skipped=int(job_data.get("messages_skipped", 0)),
+        resumed_from=job_data.get("resumed_from") or None,
+        error=job_data.get("error"),
+        started_at=job_data.get("started_at"),
+        completed_at=job_data.get("completed_at"),
+    )

@@ -126,13 +126,22 @@ class UserImportRequest(BaseModel):
     max_messages: Optional[int] = Field(None, ge=1, le=100000, description="Maximum messages to import")
 
 
-class UserImportResponse(BaseModel):
-    status: str
+class UserImportStartResponse(BaseModel):
+    status: str  # "started"
+    job_id: str
     channel_id: str
-    channel_type: str  # "dm", "group_dm", or "guild"
+    message: str
+
+
+class UserImportStatusResponse(BaseModel):
+    job_id: str
+    status: str  # "running", "completed", "failed"
+    channel_id: Optional[str] = None
+    channel_type: Optional[str] = None
     channel_name: Optional[str] = None
-    messages_imported: int
-    messages_skipped: int
+    messages_imported: int = 0
+    messages_skipped: int = 0
     resumed_from: Optional[str] = None
-    oldest_message_id: Optional[str] = None
-    newest_message_id: Optional[str] = None
+    error: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
