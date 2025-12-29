@@ -12,17 +12,17 @@ class GeminiEmbeddings(Embeddings):
     """
     LangChain-compatible wrapper for Google Gemini embeddings.
 
-    Uses text-embedding-004 model with 768-dimensional vectors.
+    Uses gemini-embedding-001 model with 3072-dimensional vectors.
     """
 
-    model: str = "models/text-embedding-004"
+    model: str = "models/gemini-embedding-001"
     task_type_document: str = "RETRIEVAL_DOCUMENT"
     task_type_query: str = "RETRIEVAL_QUERY"
     batch_size: int = 100
 
     def __init__(
         self,
-        model: str = "models/text-embedding-004",
+        model: str = "models/gemini-embedding-001",
         api_key: str = None,
         **kwargs
     ):

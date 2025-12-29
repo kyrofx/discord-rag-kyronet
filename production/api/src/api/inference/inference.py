@@ -13,7 +13,7 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 class Inferencer:
     def __init__(self):
         self.vector_store = get_vector_store()
-        self.model = genai.GenerativeModel("gemini-2.5-flash")
+        self.model = genai.GenerativeModel("gemini-3-flash-preview")
         self.prompt_template = get_prompt_template()
         self.graph = self.create_graph()
 

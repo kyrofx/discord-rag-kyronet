@@ -4,7 +4,7 @@ from utils.gemini_embeddings import GeminiEmbeddings
 
 chunker = SemanticChunker(
     embeddings=GeminiEmbeddings(
-        model="models/text-embedding-004"
+        model="models/gemini-embedding-001"
     ),
     sentence_split_regex=r"<MESSAGE_SEP>",
     add_start_index=False

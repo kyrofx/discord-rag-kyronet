@@ -70,6 +70,32 @@ services:
     profiles:
       - indexing
 
+  scheduler:
+    build:
+      context: scheduler/
+      dockerfile: ./Dockerfile
+    container_name: discord_rag_scheduler
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CHANNEL_IDS=${DISCORD_CHANNEL_IDS}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://discord_rag_mongo:27017}
+      - MONGODB_DB=${MONGODB_DB}
+      - MONGODB_COLLECTION=${MONGODB_COLLECTION}
+      - RAG_API_BASE_URL=${RAG_API_BASE_URL:-http://discord_rag_api:8000}
+      - API_KEY=${API_KEY:-}
+      # Schedule: 3 AM daily (default)
+      - SCHEDULE_CRON=${SCHEDULE_CRON:-0 3 * * *}
+      # Minutes of quiet required before ingestion (default: 15)
+      - QUIET_PERIOD_MINUTES=${QUIET_PERIOD_MINUTES:-15}
+      # Backoff minutes if activity detected (default: 10)
+      - BACKOFF_MINUTES=${BACKOFF_MINUTES:-10}
+    networks:
+      - discord_rag_network
+    depends_on:
+      - mongo
+      - api
+    restart: unless-stopped
+
 volumes:
   mongo_data:
     name: discord_rag_mongo_data

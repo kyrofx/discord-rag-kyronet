@@ -15,7 +15,7 @@ redis_config = RedisConfig(
 
 vector_store = RedisVectorStore(
     embeddings=GeminiEmbeddings(
-        model="models/text-embedding-004"
+        model="models/gemini-embedding-001"
     ),
     config=redis_config
 )

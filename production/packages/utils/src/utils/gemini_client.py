@@ -10,8 +10,8 @@ import os
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 # Model configuration
-EMBEDDING_MODEL = "models/text-embedding-004"
-CHAT_MODEL = "gemini-2.5-flash"
+EMBEDDING_MODEL = "models/gemini-embedding-001"
+CHAT_MODEL = "gemini-3-flash-preview"
 
 
 def get_embeddings(
