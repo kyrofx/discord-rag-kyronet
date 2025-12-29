@@ -7,7 +7,10 @@ from typing import List
 import os
 
 # Initialize on import
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    raise ValueError("GOOGLE_API_KEY environment variable is required")
+genai.configure(api_key=api_key)
 
 # Model configuration
 EMBEDDING_MODEL = "models/text-embedding-004"

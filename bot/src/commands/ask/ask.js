@@ -27,7 +27,7 @@ const processText = async (interaction) => {
     // Build embed response
     const embed = new EmbedBuilder()
         .setTitle('Answer')
-        .setDescription(response.answer)
+        .setDescription(response.answer.substring(0, 4096)) // Discord description limit
         .setColor(0x5865F2) // Discord blurple
         .setFooter({ text: `Asked by ${interaction.user.displayName}` })
         .setTimestamp();
@@ -55,6 +55,10 @@ const processText = async (interaction) => {
         }
 
         if (sourcesText) {
+            // Discord embed field values are limited to 1024 characters
+            if (sourcesText.length > 1024) {
+                sourcesText = sourcesText.substring(0, 1020) + '...';
+            }
             embed.addFields({
                 name: 'Sources',
                 value: sourcesText,

@@ -76,12 +76,16 @@ class StatsTracker:
 
         # Update rolling averages
         n = stats.total_queries
-        stats.avg_response_time_ms = (
-            (stats.avg_response_time_ms * (n - 1) + response_time_ms) / n
-        )
-        stats.avg_sources_per_query = (
-            (stats.avg_sources_per_query * (n - 1) + sources_count) / n
-        )
+        if n > 0:
+            stats.avg_response_time_ms = (
+                (stats.avg_response_time_ms * (n - 1) + response_time_ms) / n
+            )
+            stats.avg_sources_per_query = (
+                (stats.avg_sources_per_query * (n - 1) + sources_count) / n
+            )
+        else:
+            stats.avg_response_time_ms = response_time_ms
+            stats.avg_sources_per_query = float(sources_count)
 
         # Record timestamp for time-based queries
         self.redis.zadd(self.QUERIES_KEY, {now.isoformat(): now.timestamp()})

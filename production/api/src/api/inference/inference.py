@@ -7,7 +7,10 @@ from langgraph.graph import START, StateGraph
 from inference import State
 
 # Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    raise ValueError("GOOGLE_API_KEY environment variable is required")
+genai.configure(api_key=api_key)
 
 
 class Inferencer:
@@ -37,13 +40,20 @@ class Inferencer:
         )
 
         # Generate response with Gemini
-        response = self.model.generate_content(prompt_text)
+        try:
+            response = self.model.generate_content(prompt_text)
+            answer_text = response.text
+        except Exception as e:
+            # Handle API errors gracefully
+            import logging
+            logging.error(f"Gemini API error: {str(e)}")
+            answer_text = "I apologize, but I encountered an error while generating a response. Please try again later."
 
         # Generate citations
         sources = generate_citations_for_documents(sorted_context)
 
         return {
-            "answer": response.text,
+            "answer": answer_text,
             "sources": sources
         }
 
