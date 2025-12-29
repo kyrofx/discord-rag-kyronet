@@ -3,6 +3,7 @@ Dashboard routes with authentication.
 """
 import os
 import secrets
+import hmac
 from datetime import datetime
 from functools import wraps
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Form
@@ -13,19 +14,30 @@ from stats import get_stats_tracker
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# Simple session store (in production, use Redis)
+# Simple session store
+# WARNING: In-memory sessions will be lost on restart and won't work with multiple instances
+# TODO: Move to Redis-backed sessions for production deployments
 sessions: dict[str, dict] = {}
+SESSION_CLEANUP_INTERVAL = 3600  # Cleanup old sessions every hour
 
 # Dashboard credentials from environment
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
+# Use secure cookies in production (HTTPS required)
+SECURE_COOKIES = os.getenv("SECURE_COOKIES", "true").lower() == "true"
 
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current logged-in user from session cookie."""
     session_id = request.cookies.get("session_id")
     if session_id and session_id in sessions:
-        return sessions[session_id].get("user")
+        session = sessions[session_id]
+        # Check if session has expired (24 hours)
+        created = session.get("created")
+        if created and (datetime.utcnow() - created).total_seconds() > 86400:
+            del sessions[session_id]
+            return None
+        return session.get("user")
     return None
 
 
@@ -55,7 +67,9 @@ async def login_page(request: Request, error: str = ""):
     if get_current_user(request):
         return RedirectResponse(url="/dashboard", status_code=302)
 
-    error_html = f'<div class="error">{error}</div>' if error else ""
+    # Escape error message to prevent XSS
+    import html
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
     return HTMLResponse(render_template("login", error=error_html))
 
 
@@ -68,7 +82,8 @@ async def login(request: Request, username: str = Form(...), password: str = For
             status_code=302
         )
 
-    if username == DASHBOARD_USER and password == DASHBOARD_PASS:
+    # Use constant-time comparison to prevent timing attacks
+    if username == DASHBOARD_USER and hmac.compare_digest(password, DASHBOARD_PASS):
         session_id = secrets.token_urlsafe(32)
         sessions[session_id] = {"user": username, "created": datetime.utcnow()}
 
@@ -78,7 +93,8 @@ async def login(request: Request, username: str = Form(...), password: str = For
             value=session_id,
             httponly=True,
             max_age=86400,  # 24 hours
-            samesite="lax"
+            samesite="lax",
+            secure=SECURE_COOKIES  # Only send over HTTPS when enabled
         )
         return response
 

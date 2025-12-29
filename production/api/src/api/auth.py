@@ -2,6 +2,7 @@
 API authentication middleware.
 """
 import os
+import hmac
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
@@ -45,7 +46,8 @@ async def verify_api_key(
             message="Invalid authorization scheme. Use: Authorization: Bearer <API_KEY>"
         )
 
-    if credentials.credentials != API_KEY:
+    # Use constant-time comparison to prevent timing attacks
+    if not hmac.compare_digest(credentials.credentials, API_KEY):
         raise AuthError(
             code="unauthorized",
             message="Invalid API key"

@@ -63,7 +63,9 @@ class GeminiEmbeddings(Embeddings):
                 task_type=self.task_type_document
             )
             # Handle both single and batch responses
-            if isinstance(result['embedding'][0], list):
+            if not result.get('embedding'):
+                continue
+            if isinstance(result['embedding'], list) and len(result['embedding']) > 0 and isinstance(result['embedding'][0], list):
                 embeddings.extend(result['embedding'])
             else:
                 embeddings.append(result['embedding'])

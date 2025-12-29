@@ -69,6 +69,13 @@ async def query(
     start_time = time.time()
     tracker = get_stats_tracker()
 
+    # Validate input
+    if not request.query or not request.query.strip():
+        raise ValidationError("Query cannot be empty")
+    
+    if len(request.query) > 10000:
+        raise ValidationError("Query is too long (max 10000 characters)")
+
     try:
         inferencer = get_inferencer()
         result = inferencer.infer(request.query)
