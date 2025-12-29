@@ -320,14 +320,21 @@ async def debug_embed(
 
 # ============== User Token Import ==============
 
-async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_messages: Optional[int]):
+async def _run_import_job(
+    job_id: str,
+    user_token: str,
+    channel_id: str,
+    max_messages: Optional[int],
+    guild_id: Optional[str] = None,
+    full_history: bool = True
+):
     """Background task to run the import job."""
     from user_import import run_import
     import asyncio
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting import job {job_id} for channel {channel_id}")
+    logger.info(f"Starting import job {job_id} for channel {channel_id}, full_history={full_history}")
 
     try:
         # Update status to running
@@ -341,7 +348,9 @@ async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_mes
         result = await run_import(
             user_token=user_token,
             channel_id=channel_id,
-            max_messages=max_messages
+            max_messages=max_messages,
+            guild_id_override=guild_id,
+            full_history=full_history
         )
 
         logger.info(f"Import job {job_id} completed: {result['messages_imported']} imported, {result['messages_skipped']} skipped")
@@ -400,7 +409,9 @@ async def import_with_user_token(
         job_id,
         request.user_token,
         request.channel_id,
-        request.max_messages
+        request.max_messages,
+        request.guild_id,
+        request.full_history
     )
 
     return UserImportStartResponse(

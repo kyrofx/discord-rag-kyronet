@@ -5,9 +5,11 @@ WARNING: Using user tokens (selfbots) violates Discord's Terms of Service
 and may result in account termination. Use at your own risk.
 """
 import os
+import json
 import httpx
 import asyncio
 import logging
+import redis
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -39,9 +41,54 @@ class UserTokenImporter:
         self.db = self.mongo_client[db_name]
         self.collection = self.db[collection_name]
 
+        # Redis setup for stats
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        self.redis_client = redis.from_url(redis_url, decode_responses=True)
+
     async def close(self):
         """Close the MongoDB connection."""
         self.mongo_client.close()
+
+    def _update_stats(self, guild_id: str, channel_id: str, channel_name: str, messages_imported: int, oldest_timestamp: int = None, newest_timestamp: int = None):
+        """Update Redis stats after importing messages."""
+        if messages_imported == 0:
+            return
+
+        stats_key = f"discord_rag:guild:{guild_id}:stats"
+        channels_key = f"discord_rag:guild:{guild_id}:channels"
+
+        # Update message count
+        self.redis_client.hincrby(stats_key, "total_messages", messages_imported)
+
+        # Update last indexed time
+        self.redis_client.hset(stats_key, "last_indexed", datetime.utcnow().isoformat())
+
+        # Update date range if we have timestamps
+        if oldest_timestamp:
+            current_oldest = self.redis_client.hget(stats_key, "oldest_message")
+            if not current_oldest or oldest_timestamp < int(current_oldest):
+                self.redis_client.hset(stats_key, "oldest_message", str(oldest_timestamp))
+
+        if newest_timestamp:
+            current_newest = self.redis_client.hget(stats_key, "newest_message")
+            if not current_newest or newest_timestamp > int(current_newest):
+                self.redis_client.hset(stats_key, "newest_message", str(newest_timestamp))
+
+        # Update channel info
+        channel_data = self.redis_client.hget(channels_key, channel_id)
+        if channel_data:
+            try:
+                info = json.loads(channel_data)
+                info["message_count"] = info.get("message_count", 0) + messages_imported
+            except:
+                info = {"name": channel_name or channel_id, "message_count": messages_imported}
+        else:
+            info = {"name": channel_name or channel_id, "message_count": messages_imported}
+            # Increment indexed channels count for new channel
+            self.redis_client.hincrby(stats_key, "indexed_channels", 1)
+
+        self.redis_client.hset(channels_key, channel_id, json.dumps(info))
+        logger.info(f"Updated stats for guild {guild_id}: +{messages_imported} messages")
 
     async def get_channel_info(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """Get channel information to determine type (DM, Group DM, or Guild)."""
@@ -82,12 +129,15 @@ class UserTokenImporter:
         self,
         channel_id: str,
         after: Optional[str] = None,
+        before: Optional[str] = None,
         limit: int = MAX_MESSAGES_PER_REQUEST
     ) -> List[Dict[str, Any]]:
         """Fetch messages from Discord API."""
         params = {"limit": min(limit, MAX_MESSAGES_PER_REQUEST)}
         if after:
             params["after"] = after
+        if before:
+            params["before"] = before
 
         logger.info(f"Fetching messages for channel {channel_id} with params: {params}")
 
@@ -171,14 +221,22 @@ class UserTokenImporter:
     async def import_messages(
         self,
         channel_id: str,
-        max_messages: Optional[int] = None
+        max_messages: Optional[int] = None,
+        guild_id_override: Optional[str] = None,
+        full_history: bool = False
     ) -> Dict[str, Any]:
         """
         Import messages from a Discord channel.
 
+        Args:
+            channel_id: Discord channel ID to import from
+            max_messages: Maximum messages to import
+            guild_id_override: Override guild ID for stats (useful for group DMs)
+            full_history: If True, fetch all historical messages. If False, only fetch new ones.
+
         Returns statistics about the import.
         """
-        logger.info(f"Starting import for channel {channel_id}, max_messages={max_messages}")
+        logger.info(f"Starting import for channel {channel_id}, max_messages={max_messages}, full_history={full_history}")
 
         # Get channel info first
         channel_info = await self.get_channel_info(channel_id)
@@ -186,7 +244,7 @@ class UserTokenImporter:
         channel_type_name = {0: "guild", 1: "dm", 3: "group_dm"}.get(channel_type, "unknown")
         logger.info(f"Channel type: {channel_type_name}")
 
-        # Get last stored message to resume from
+        # Get last stored message to resume from (for incremental mode)
         last_message_id = await self.get_latest_stored_message_id(channel_id)
         logger.info(f"Last stored message ID: {last_message_id}")
 
@@ -194,91 +252,162 @@ class UserTokenImporter:
         messages_skipped = 0
         oldest_id = None
         newest_id = None
-
-        # Fetch messages in batches
-        # Note: Discord returns messages newest-first, but 'after' returns messages newer than the ID
-        # So we need to fetch all and reverse, or use 'before' for pagination
-
-        # Strategy: Use 'after' with our last stored ID to get only new messages
-        current_after = last_message_id or "0"
+        oldest_timestamp = None
+        newest_timestamp = None
         batch_count = 0
 
-        while True:
-            if max_messages and messages_imported >= max_messages:
-                logger.info(f"Reached max_messages limit: {max_messages}")
-                break
+        # Determine import mode
+        # If full_history=True OR no stored messages, do full historical import using 'before'
+        # Otherwise, do incremental import using 'after'
+        use_full_history = full_history or (last_message_id is None)
+        logger.info(f"Import mode: {'full_history' if use_full_history else 'incremental'}")
 
-            batch = await self.fetch_messages(channel_id, after=current_after)
-            batch_count += 1
-            logger.info(f"Batch {batch_count}: fetched {len(batch) if batch else 0} messages")
+        if use_full_history:
+            # FULL HISTORY MODE: Use 'before' to paginate backwards through all messages
+            current_before = None  # Start from newest
 
-            if not batch:
-                logger.info("Empty batch received, ending import")
-                break
+            while True:
+                if max_messages and messages_imported >= max_messages:
+                    logger.info(f"Reached max_messages limit: {max_messages}")
+                    break
 
-            # Discord returns newest first, reverse to process oldest first
-            batch.reverse()
+                batch = await self.fetch_messages(channel_id, before=current_before)
+                batch_count += 1
+                logger.info(f"Batch {batch_count}: fetched {len(batch) if batch else 0} messages")
 
-            # Filter out bot messages and empty content
-            valid_messages = []
-            bot_count = 0
-            empty_count = 0
-            for msg in batch:
+                if not batch:
+                    logger.info("Empty batch received, ending import")
+                    break
+
+                # Discord returns newest first - process in that order for 'before' pagination
+                # Filter out bot messages and empty content
+                valid_messages = []
+                bot_count = 0
+                empty_count = 0
+                for msg in batch:
+                    if msg.get("author", {}).get("bot"):
+                        messages_skipped += 1
+                        bot_count += 1
+                        continue
+                    if not msg.get("content", "").strip():
+                        messages_skipped += 1
+                        empty_count += 1
+                        continue
+                    valid_messages.append(msg)
+
+                logger.info(f"Batch {batch_count}: {len(valid_messages)} valid, {bot_count} bots, {empty_count} empty")
+
+                if valid_messages:
+                    # Convert and store
+                    documents = [
+                        self._convert_message(msg, channel_info, channel_id)
+                        for msg in valid_messages
+                    ]
+
+                    # Upsert to avoid duplicates
+                    for doc in documents:
+                        await self.collection.update_one(
+                            {"_id": doc["_id"]},
+                            {"$set": doc},
+                            upsert=True
+                        )
+
+                    messages_imported += len(documents)
+                    logger.info(f"Stored {len(documents)} messages, total imported: {messages_imported}")
+
+                    # Track range (documents are newest-first)
+                    if newest_id is None:
+                        newest_id = documents[0]["_id"]
+                        newest_timestamp = documents[0]["timestamp"]
+                    oldest_id = documents[-1]["_id"]
+                    oldest_timestamp = documents[-1]["timestamp"]
+
+                # Update cursor - use the oldest message ID from batch for 'before' pagination
+                current_before = batch[-1]["id"]
+                logger.info(f"Next cursor: before={current_before}")
+
+                # Rate limit protection
+                await asyncio.sleep(RATE_LIMIT_DELAY)
+
+                # If we got fewer than max, we've reached the end
+                if len(batch) < MAX_MESSAGES_PER_REQUEST:
+                    logger.info(f"Batch had {len(batch)} messages (< {MAX_MESSAGES_PER_REQUEST}), ending import")
+                    break
+        else:
+            # INCREMENTAL MODE: Use 'after' to get only new messages since last import
+            current_after = last_message_id
+            all_new_messages = []
+
+            # First, collect all new messages
+            while True:
+                if max_messages and len(all_new_messages) >= max_messages:
+                    break
+
+                batch = await self.fetch_messages(channel_id, after=current_after)
+                batch_count += 1
+                logger.info(f"Batch {batch_count}: fetched {len(batch) if batch else 0} messages")
+
+                if not batch:
+                    break
+
+                all_new_messages.extend(batch)
+
+                # Discord returns newest first, so get the newest ID for next pagination
+                current_after = batch[0]["id"]
+
+                await asyncio.sleep(RATE_LIMIT_DELAY)
+
+                if len(batch) < MAX_MESSAGES_PER_REQUEST:
+                    break
+
+            # Process collected messages (reverse to oldest-first for storage)
+            all_new_messages.reverse()
+
+            for msg in all_new_messages:
                 if msg.get("author", {}).get("bot"):
                     messages_skipped += 1
-                    bot_count += 1
                     continue
                 if not msg.get("content", "").strip():
                     messages_skipped += 1
-                    empty_count += 1
                     continue
-                valid_messages.append(msg)
 
-            logger.info(f"Batch {batch_count}: {len(valid_messages)} valid, {bot_count} bots, {empty_count} empty")
+                doc = self._convert_message(msg, channel_info, channel_id)
+                await self.collection.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": doc},
+                    upsert=True
+                )
+                messages_imported += 1
 
-            if valid_messages:
-                # Convert and store
-                documents = [
-                    self._convert_message(msg, channel_info, channel_id)
-                    for msg in valid_messages
-                ]
-
-                # Upsert to avoid duplicates
-                for doc in documents:
-                    await self.collection.update_one(
-                        {"_id": doc["_id"]},
-                        {"$set": doc},
-                        upsert=True
-                    )
-
-                messages_imported += len(documents)
-                logger.info(f"Stored {len(documents)} messages, total imported: {messages_imported}")
-
-                # Track range
                 if oldest_id is None:
-                    oldest_id = documents[0]["_id"]
-                newest_id = documents[-1]["_id"]
+                    oldest_id = doc["_id"]
+                    oldest_timestamp = doc["timestamp"]
+                newest_id = doc["_id"]
+                newest_timestamp = doc["timestamp"]
 
-            # Update cursor for next batch - use the newest message ID from original batch
-            current_after = batch[-1]["id"]
-            logger.info(f"Next cursor: after={current_after}")
-
-            # Rate limit protection
-            await asyncio.sleep(RATE_LIMIT_DELAY)
-
-            # If we got fewer than max, we've reached the end
-            if len(batch) < MAX_MESSAGES_PER_REQUEST:
-                logger.info(f"Batch had {len(batch)} messages (< {MAX_MESSAGES_PER_REQUEST}), ending import")
-                break
+            logger.info(f"Incremental import complete: {messages_imported} imported, {messages_skipped} skipped")
 
         logger.info(f"Import complete: {messages_imported} imported, {messages_skipped} skipped")
+
+        # Update Redis stats
+        # Use override guild_id if provided, otherwise use channel's guild_id or channel_id
+        stats_guild_id = guild_id_override or channel_info.get("guild_id") or channel_id
+        self._update_stats(
+            guild_id=stats_guild_id,
+            channel_id=channel_id,
+            channel_name=channel_info.get("name") or f"Channel {channel_id}",
+            messages_imported=messages_imported,
+            oldest_timestamp=oldest_timestamp,
+            newest_timestamp=newest_timestamp
+        )
+
         return {
             "channel_id": channel_id,
             "channel_type": channel_type_name,
             "channel_name": channel_info.get("name"),
             "messages_imported": messages_imported,
             "messages_skipped": messages_skipped,
-            "resumed_from": last_message_id,
+            "resumed_from": last_message_id if not use_full_history else None,
             "oldest_message_id": oldest_id,
             "newest_message_id": newest_id
         }
@@ -287,7 +416,9 @@ class UserTokenImporter:
 async def run_import(
     user_token: str,
     channel_id: str,
-    max_messages: Optional[int] = None
+    max_messages: Optional[int] = None,
+    guild_id_override: Optional[str] = None,
+    full_history: bool = False
 ) -> Dict[str, Any]:
     """
     Run a user token import.
@@ -297,7 +428,12 @@ async def run_import(
     importer = UserTokenImporter(user_token)
 
     try:
-        result = await importer.import_messages(channel_id, max_messages)
+        result = await importer.import_messages(
+            channel_id,
+            max_messages,
+            guild_id_override=guild_id_override,
+            full_history=full_history
+        )
         return result
     finally:
         await importer.close()
