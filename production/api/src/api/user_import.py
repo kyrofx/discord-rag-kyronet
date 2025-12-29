@@ -7,9 +7,12 @@ and may result in account termination. Use at your own risk.
 import os
 import httpx
 import asyncio
+import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
+
+logger = logging.getLogger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_MESSAGES_PER_REQUEST = 100
@@ -42,21 +45,29 @@ class UserTokenImporter:
 
     async def get_channel_info(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """Get channel information to determine type (DM, Group DM, or Guild)."""
+        logger.info(f"Fetching channel info for {channel_id}")
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{DISCORD_API_BASE}/channels/{channel_id}",
                 headers=self.headers
             )
 
+            logger.info(f"Channel info response: {response.status_code}")
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"Channel type: {data.get('type')}, name: {data.get('name')}")
+                return data
             elif response.status_code == 401:
+                logger.error("Invalid user token")
                 raise ValueError("Invalid user token")
             elif response.status_code == 403:
+                logger.error("No access to this channel")
                 raise ValueError("No access to this channel")
             elif response.status_code == 404:
+                logger.error("Channel not found")
                 raise ValueError("Channel not found")
             else:
+                logger.error(f"Discord API error: {response.status_code} - {response.text}")
                 raise ValueError(f"Discord API error: {response.status_code}")
 
     async def get_latest_stored_message_id(self, channel_id: str) -> Optional[str]:
@@ -78,6 +89,8 @@ class UserTokenImporter:
         if after:
             params["after"] = after
 
+        logger.info(f"Fetching messages for channel {channel_id} with params: {params}")
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
@@ -85,18 +98,25 @@ class UserTokenImporter:
                 params=params
             )
 
+            logger.info(f"Messages response: {response.status_code}")
             if response.status_code == 200:
-                return response.json()
+                messages = response.json()
+                logger.info(f"Fetched {len(messages)} messages")
+                return messages
             elif response.status_code == 429:
                 # Rate limited - wait and retry
                 retry_after = response.json().get("retry_after", 5)
+                logger.warning(f"Rate limited, waiting {retry_after}s")
                 await asyncio.sleep(retry_after)
                 return await self.fetch_messages(channel_id, after, limit)
             elif response.status_code == 401:
+                logger.error("Invalid user token when fetching messages")
                 raise ValueError("Invalid user token")
             elif response.status_code == 403:
+                logger.error("No access to this channel when fetching messages")
                 raise ValueError("No access to this channel")
             else:
+                logger.error(f"Discord API error: {response.status_code} - {response.text}")
                 raise ValueError(f"Discord API error: {response.status_code}")
 
     def _build_message_url(self, channel_info: Dict, channel_id: str, message_id: str) -> str:
@@ -158,13 +178,17 @@ class UserTokenImporter:
 
         Returns statistics about the import.
         """
+        logger.info(f"Starting import for channel {channel_id}, max_messages={max_messages}")
+
         # Get channel info first
         channel_info = await self.get_channel_info(channel_id)
         channel_type = channel_info.get("type", 0)
         channel_type_name = {0: "guild", 1: "dm", 3: "group_dm"}.get(channel_type, "unknown")
+        logger.info(f"Channel type: {channel_type_name}")
 
         # Get last stored message to resume from
         last_message_id = await self.get_latest_stored_message_id(channel_id)
+        logger.info(f"Last stored message ID: {last_message_id}")
 
         messages_imported = 0
         messages_skipped = 0
@@ -177,14 +201,19 @@ class UserTokenImporter:
 
         # Strategy: Use 'after' with our last stored ID to get only new messages
         current_after = last_message_id or "0"
+        batch_count = 0
 
         while True:
             if max_messages and messages_imported >= max_messages:
+                logger.info(f"Reached max_messages limit: {max_messages}")
                 break
 
             batch = await self.fetch_messages(channel_id, after=current_after)
+            batch_count += 1
+            logger.info(f"Batch {batch_count}: fetched {len(batch) if batch else 0} messages")
 
             if not batch:
+                logger.info("Empty batch received, ending import")
                 break
 
             # Discord returns newest first, reverse to process oldest first
@@ -192,14 +221,20 @@ class UserTokenImporter:
 
             # Filter out bot messages and empty content
             valid_messages = []
+            bot_count = 0
+            empty_count = 0
             for msg in batch:
                 if msg.get("author", {}).get("bot"):
                     messages_skipped += 1
+                    bot_count += 1
                     continue
                 if not msg.get("content", "").strip():
                     messages_skipped += 1
+                    empty_count += 1
                     continue
                 valid_messages.append(msg)
+
+            logger.info(f"Batch {batch_count}: {len(valid_messages)} valid, {bot_count} bots, {empty_count} empty")
 
             if valid_messages:
                 # Convert and store
@@ -217,22 +252,26 @@ class UserTokenImporter:
                     )
 
                 messages_imported += len(documents)
+                logger.info(f"Stored {len(documents)} messages, total imported: {messages_imported}")
 
                 # Track range
                 if oldest_id is None:
                     oldest_id = documents[0]["_id"]
                 newest_id = documents[-1]["_id"]
 
-                # Update cursor for next batch
-                current_after = batch[-1]["id"]
+            # Update cursor for next batch - use the newest message ID from original batch
+            current_after = batch[-1]["id"]
+            logger.info(f"Next cursor: after={current_after}")
 
             # Rate limit protection
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
             # If we got fewer than max, we've reached the end
             if len(batch) < MAX_MESSAGES_PER_REQUEST:
+                logger.info(f"Batch had {len(batch)} messages (< {MAX_MESSAGES_PER_REQUEST}), ending import")
                 break
 
+        logger.info(f"Import complete: {messages_imported} imported, {messages_skipped} skipped")
         return {
             "channel_id": channel_id,
             "channel_type": channel_type_name,

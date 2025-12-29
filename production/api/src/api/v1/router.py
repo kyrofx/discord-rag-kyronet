@@ -324,6 +324,10 @@ async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_mes
     """Background task to run the import job."""
     from user_import import run_import
     import asyncio
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting import job {job_id} for channel {channel_id}")
 
     try:
         # Update status to running
@@ -340,6 +344,8 @@ async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_mes
             max_messages=max_messages
         )
 
+        logger.info(f"Import job {job_id} completed: {result['messages_imported']} imported, {result['messages_skipped']} skipped")
+
         # Update with final results
         redis_client.hset(f"discord_rag:import:{job_id}", mapping={
             "status": "completed",
@@ -353,6 +359,7 @@ async def _run_import_job(job_id: str, user_token: str, channel_id: str, max_mes
         })
 
     except Exception as e:
+        logger.error(f"Import job {job_id} failed: {str(e)}", exc_info=True)
         redis_client.hset(f"discord_rag:import:{job_id}", mapping={
             "status": "failed",
             "error": str(e),
