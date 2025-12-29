@@ -8,11 +8,13 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.10"
 langchain-core = "0.3.28"
-langchain-openai = "0.2.14"
+google-generativeai = ">=0.8.0"
 langgraph = "0.2.60"
 fastapi = "0.115.6"
 uvicorn = "0.34.0"
 python-multipart = "0.0.20"
+pydantic = "^2.0.0"
+redis = "^5.0.0"
 utils = { path = "../packages/utils/" }
 
 

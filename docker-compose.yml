@@ -4,7 +4,7 @@ services:
     container_name: discord_rag_mongo
     ports:
       - "27017:27017"
-    volumes: 
+    volumes:
       - mongo_data:/data/db
     networks:
       - discord_rag_network
@@ -23,11 +23,15 @@ services:
     build:
       context: production/
       dockerfile: ./api/Dockerfile
-    env_file:
-      - production/api/.env
     container_name: discord_rag_api
     ports:
       - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://discord_rag_redis:6379}
+      - DASHBOARD_USER=${DASHBOARD_USER:-admin}
+      - DASHBOARD_PASS=${DASHBOARD_PASS}
+      - API_KEY=${API_KEY:-}
     networks:
       - discord_rag_network
     depends_on:
@@ -37,13 +41,34 @@ services:
     build:
       context: bot/
       dockerfile: ./Dockerfile
-    env_file:
-      - bot/src/.env
     container_name: discord_rag_bot
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_BOT_CLIENT_ID=${DISCORD_BOT_CLIENT_ID}
+      - RAG_API_BASE_URL=${RAG_API_BASE_URL:-http://discord_rag_api:8000}
     networks:
       - discord_rag_network
     depends_on:
       - api
+
+  indexer:
+    build:
+      context: production/
+      dockerfile: ./indexing_pipeline/Dockerfile
+    container_name: discord_rag_indexer
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://discord_rag_mongo:27017}
+      - MONGODB_DB=${MONGODB_DB}
+      - MONGODB_COLLECTION=${MONGODB_COLLECTION}
+      - REDIS_URL=${REDIS_URL:-redis://discord_rag_redis:6379}
+    networks:
+      - discord_rag_network
+    depends_on:
+      - mongo
+      - redis
+    profiles:
+      - indexing
 
 volumes:
   mongo_data:

@@ -1,1 +1,17 @@
 node_modules
+
+# Environment files (use .env.example as template)
+.env
+**/.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
