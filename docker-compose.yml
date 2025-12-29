@@ -29,6 +29,8 @@ services:
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - REDIS_URL=${REDIS_URL:-redis://discord_rag_redis:6379}
+      - DASHBOARD_USER=${DASHBOARD_USER:-admin}
+      - DASHBOARD_PASS=${DASHBOARD_PASS}
     networks:
       - discord_rag_network
     depends_on:
