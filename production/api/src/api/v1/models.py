@@ -116,3 +116,23 @@ class EmbedResponse(BaseModel):
     embedding: List[float]
     dimensions: int
     model: str
+
+
+# ============== User Token Import ==============
+
+class UserImportRequest(BaseModel):
+    user_token: str = Field(..., description="Discord user account token (NOT a bot token)")
+    channel_id: str = Field(..., description="Discord channel ID (DM, Group DM, or server channel)")
+    max_messages: Optional[int] = Field(None, ge=1, le=100000, description="Maximum messages to import")
+
+
+class UserImportResponse(BaseModel):
+    status: str
+    channel_id: str
+    channel_type: str  # "dm", "group_dm", or "guild"
+    channel_name: Optional[str] = None
+    messages_imported: int
+    messages_skipped: int
+    resumed_from: Optional[str] = None
+    oldest_message_id: Optional[str] = None
+    newest_message_id: Optional[str] = None

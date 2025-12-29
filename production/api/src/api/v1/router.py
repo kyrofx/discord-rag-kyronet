@@ -23,6 +23,7 @@ from v1.models import (
     GuildStatsResponse, DateRange,
     ChannelsResponse, ChannelInfo,
     EmbedRequest, EmbedResponse,
+    UserImportRequest, UserImportResponse,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -50,7 +51,7 @@ async def health():
     """Health check endpoint."""
     return HealthResponse(
         status="ok",
-        model="gemini-2.5-flash",
+        model="gemini-3-flash-preview",
         version="1.0.0"
     )
 
@@ -313,5 +314,55 @@ async def debug_embed(
         text=request.text,
         embedding=vector,
         dimensions=len(vector),
-        model="text-embedding-004"
+        model="gemini-embedding-001"
     )
+
+
+# ============== User Token Import ==============
+
+@router.post("/import/user-token", response_model=UserImportResponse)
+async def import_with_user_token(
+    request: UserImportRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Import messages from a Discord channel using a user account token.
+
+    This endpoint allows importing messages from DMs, Group DMs, or server
+    channels that the user account has access to. It automatically resumes
+    from the last imported message.
+
+    WARNING: Using user tokens violates Discord's Terms of Service and may
+    result in account termination. Use at your own risk.
+
+    The import will:
+    - Skip bot messages and empty messages
+    - Resume from the last stored message (no duplicates)
+    - Build proper Discord URLs for citations (@me for DMs/Group DMs)
+    - Rate limit requests to avoid Discord API bans
+    """
+    from user_import import run_import
+
+    try:
+        result = await run_import(
+            user_token=request.user_token,
+            channel_id=request.channel_id,
+            max_messages=request.max_messages
+        )
+
+        return UserImportResponse(
+            status="completed",
+            channel_id=result["channel_id"],
+            channel_type=result["channel_type"],
+            channel_name=result.get("channel_name"),
+            messages_imported=result["messages_imported"],
+            messages_skipped=result["messages_skipped"],
+            resumed_from=result.get("resumed_from"),
+            oldest_message_id=result.get("oldest_message_id"),
+            newest_message_id=result.get("newest_message_id")
+        )
+
+    except ValueError as e:
+        raise ValidationError(str(e))
+    except Exception as e:
+        raise InternalError(f"Import failed: {str(e)}")
