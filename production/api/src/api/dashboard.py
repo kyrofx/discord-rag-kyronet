@@ -3,8 +3,8 @@ Dashboard routes with authentication.
 """
 import os
 import secrets
-import subprocess
 import threading
+import logging
 from datetime import datetime
 from functools import wraps
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Form
@@ -12,6 +12,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import Optional
 
 from stats import get_stats_tracker
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -331,32 +333,70 @@ def _run_indexing_pipeline():
     indexing_status["error"] = None
     indexing_status["last_run"] = datetime.utcnow().isoformat()
 
+    logger.info("Starting indexing pipeline from dashboard...")
+
     try:
-        # Run the indexing pipeline
-        result = subprocess.run(
-            ["python", "-m", "indexing_pipeline.main"],
-            cwd="/app/indexing_pipeline",  # Adjust path as needed for your deployment
-            capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout
-        )
+        # Try to import and run the indexing pipeline directly
+        from utils.ingestion import ingest_documents
+        from utils.preprocessing import preprocess_documents
+        from utils.chunking import chunk_documents
+        from utils.vector_store import index_documents_to_redis, check_index_status
 
-        if result.returncode == 0:
-            indexing_status["last_result"] = "success"
-            indexing_status["error"] = None
-        else:
+        # Check index status before
+        status_before = check_index_status()
+        logger.info(f"Index status before: exists={status_before['exists']}, num_docs={status_before['num_docs']}")
+
+        # Ingest documents
+        logger.info("Ingesting documents from MongoDB...")
+        documents = ingest_documents()
+
+        if len(documents) == 0:
             indexing_status["last_result"] = "failed"
-            indexing_status["error"] = result.stderr[-1000:] if result.stderr else "Unknown error"
+            indexing_status["error"] = "No documents found in MongoDB"
+            logger.warning("No documents found in the database")
+            return
 
-    except subprocess.TimeoutExpired:
-        indexing_status["last_result"] = "timeout"
-        indexing_status["error"] = "Indexing timed out after 1 hour"
-    except FileNotFoundError:
-        indexing_status["last_result"] = "failed"
-        indexing_status["error"] = "Indexing pipeline not found. Make sure the indexing_pipeline package is installed."
+        logger.info(f"Found {len(documents)} documents")
+
+        # Preprocess
+        logger.info("Preprocessing documents...")
+        preprocessed = preprocess_documents(documents)
+        logger.info(f"Preprocessing complete: {len(preprocessed)} conversation chunks")
+
+        if len(preprocessed) == 0:
+            indexing_status["last_result"] = "failed"
+            indexing_status["error"] = "No documents left after preprocessing"
+            return
+
+        # Chunk and index in batches
+        BATCH_SIZE = 10
+        total_indexed = 0
+        errors = 0
+
+        for i in range(0, len(preprocessed), BATCH_SIZE):
+            batch = preprocessed[i:i+BATCH_SIZE]
+            try:
+                chunks = chunk_documents(batch)
+                if chunks:
+                    index_documents_to_redis(chunks)
+                    total_indexed += len(chunks)
+                    logger.info(f"Indexed batch {i//BATCH_SIZE + 1}: {len(chunks)} chunks")
+            except Exception as e:
+                errors += 1
+                logger.error(f"Error indexing batch {i//BATCH_SIZE + 1}: {e}")
+
+        # Check status after
+        status_after = check_index_status()
+        logger.info(f"Index status after: exists={status_after['exists']}, num_docs={status_after['num_docs']}")
+
+        indexing_status["last_result"] = "success"
+        indexing_status["error"] = None if errors == 0 else f"{errors} batch errors"
+        logger.info(f"Indexing complete: {total_indexed} chunks indexed, {errors} errors")
+
     except Exception as e:
         indexing_status["last_result"] = "failed"
         indexing_status["error"] = str(e)
+        logger.exception(f"Indexing pipeline failed: {e}")
     finally:
         indexing_status["running"] = False
 
