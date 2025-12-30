@@ -113,19 +113,14 @@ class StreamingChatInferencer:
 
         logger.info(f"Creating model: {model_name} with thinking: {thinking_level}")
 
-        # Build generation config with thinking if using Gemini 3
-        generation_config = None
-        if model_name.startswith("gemini-3"):
-            # Gemini 3 models support thinking_config
-            generation_config = {
-                "thinking_config": {"thinking_level": thinking_level}
-            }
+        # Note: thinking_config requires the newer google-genai SDK
+        # For now, we only use model selection. Thinking level is stored but not applied
+        # until the SDK is upgraded from google-generativeai to google-genai
 
         return genai.GenerativeModel(
             model_name,
             tools=[tools],
-            system_instruction=CHAT_SYSTEM_PROMPT,
-            generation_config=generation_config
+            system_instruction=CHAT_SYSTEM_PROMPT
         )
 
     def _search_messages(self, query: str, num_results: int = 8) -> List[Document]:
