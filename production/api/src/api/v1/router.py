@@ -23,6 +23,7 @@ from v1.models import (
     GuildStatsResponse, DateRange,
     ChannelsResponse, ChannelInfo,
     EmbedRequest, EmbedResponse,
+    IndexStatusResponse,
     UserImportRequest, UserImportStartResponse, UserImportStatusResponse,
 )
 
@@ -315,6 +316,28 @@ async def debug_embed(
         embedding=vector,
         dimensions=len(vector),
         model="gemini-embedding-001"
+    )
+
+
+@router.get("/debug/index-status", response_model=IndexStatusResponse)
+async def debug_index_status(
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Check the status of the vector index.
+
+    Returns whether the index exists and how many documents it contains.
+    Use this to diagnose issues with empty query results.
+    """
+    from utils.vector_store import check_index_status, INDEX_NAME
+
+    status = check_index_status()
+
+    return IndexStatusResponse(
+        index_name=INDEX_NAME,
+        exists=status["exists"],
+        num_docs=status["num_docs"],
+        error=status.get("error")
     )
 
 

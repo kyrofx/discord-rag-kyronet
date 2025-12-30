@@ -118,6 +118,13 @@ class EmbedResponse(BaseModel):
     model: str
 
 
+class IndexStatusResponse(BaseModel):
+    index_name: str
+    exists: bool
+    num_docs: int
+    error: Optional[str] = None
+
+
 # ============== User Token Import ==============
 
 class UserImportRequest(BaseModel):
