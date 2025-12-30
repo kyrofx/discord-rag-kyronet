@@ -33,9 +33,7 @@ search_messages_func = FunctionDeclaration(
             },
             "num_results": {
                 "type": "integer",
-                "description": "Number of results to return (default 8, max 20)",
-                "minimum": 1,
-                "maximum": 20
+                "description": "Number of results to return (1-20, default 8)"
             }
         },
         "required": ["query"]
