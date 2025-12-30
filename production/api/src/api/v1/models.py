@@ -171,3 +171,4 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = Field(default_factory=list, description="Previous messages in the conversation")
     guild_id: str = Field(..., description="Discord guild/server ID")
     channel_ids: Optional[List[str]] = Field(None, description="Filter to specific channels")
+    model: Optional[str] = Field(None, description="Gemini model to use (e.g., gemini-2.0-flash, gemini-2.5-pro)")

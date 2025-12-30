@@ -135,7 +135,7 @@ async def chat(
     history = [{"role": msg.role, "content": msg.content} for msg in request.history]
 
     def generate():
-        for event in inferencer.chat_stream(request.message, history):
+        for event in inferencer.chat_stream(request.message, history, model_override=request.model):
             yield event
 
     return StreamingResponse(

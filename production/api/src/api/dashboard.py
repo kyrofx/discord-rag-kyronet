@@ -210,6 +210,22 @@ async def dashboard(request: Request):
     indexing_running = indexing_status.get("running", False)
     indexing_last_result = indexing_status.get("last_result", "")
 
+    # Get current model settings
+    current_model = get_current_model()
+    current_thinking = get_current_thinking()
+
+    # Build model options HTML
+    model_options = ""
+    for m in AVAILABLE_MODELS:
+        selected = "selected" if m["id"] == current_model else ""
+        model_options += f'<option value="{m["id"]}" {selected}>{m["name"]}</option>'
+
+    # Build thinking options HTML
+    thinking_options = ""
+    for t in THINKING_LEVELS:
+        selected = "selected" if t["id"] == current_thinking else ""
+        thinking_options += f'<option value="{t["id"]}" {selected}>{t["name"]}</option>'
+
     return HTMLResponse(render_template(
         "dashboard",
         user=user,
@@ -233,6 +249,11 @@ async def dashboard(request: Request):
         index_status_class=index_status_class,
         indexing_running="true" if indexing_running else "false",
         indexing_last_result=indexing_last_result,
+        # Model settings
+        model_options=model_options,
+        thinking_options=thinking_options,
+        current_model=current_model,
+        current_thinking=current_thinking,
     ))
 
 
@@ -427,6 +448,106 @@ async def run_indexing(user: str = Depends(require_auth)):
 async def get_indexing_status(user: str = Depends(require_auth)):
     """Get the current indexing pipeline status."""
     return indexing_status
+
+
+# Available Gemini models
+AVAILABLE_MODELS = [
+    {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash", "description": "Fast Gemini 3 model"},
+    {"id": "gemini-3-pro-preview", "name": "Gemini 3 Pro", "description": "Most capable Gemini 3 model"},
+    {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "description": "Fast, efficient model"},
+    {"id": "gemini-2.5-flash-preview-05-20", "name": "Gemini 2.5 Flash Preview", "description": "Latest 2.5 flash"},
+    {"id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro Preview", "description": "Capable 2.5 model"},
+]
+
+THINKING_LEVELS = [
+    {"id": "low", "name": "Low", "description": "Minimal reasoning, fastest"},
+    {"id": "medium", "name": "Medium", "description": "Balanced reasoning (Flash only)"},
+    {"id": "high", "name": "High", "description": "Maximum reasoning depth (default)"},
+]
+
+DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_THINKING = "low"
+
+
+def get_current_model() -> str:
+    """Get the currently configured model from Redis."""
+    import redis
+    try:
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        model = r.get("discord_rag:settings:model")
+        return model if model else DEFAULT_MODEL
+    except Exception:
+        return DEFAULT_MODEL
+
+
+def get_current_thinking() -> str:
+    """Get the currently configured thinking level from Redis."""
+    import redis
+    try:
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        thinking = r.get("discord_rag:settings:thinking")
+        return thinking if thinking else DEFAULT_THINKING
+    except Exception:
+        return DEFAULT_THINKING
+
+
+def set_current_model(model_id: str) -> bool:
+    """Set the current model in Redis."""
+    import redis
+    try:
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        r.set("discord_rag:settings:model", model_id)
+        return True
+    except Exception:
+        return False
+
+
+def set_current_thinking(thinking_level: str) -> bool:
+    """Set the current thinking level in Redis."""
+    import redis
+    try:
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        r.set("discord_rag:settings:thinking", thinking_level)
+        return True
+    except Exception:
+        return False
+
+
+@router.get("/api/settings")
+async def get_settings(user: str = Depends(require_auth)):
+    """Get current settings."""
+    return {
+        "model": get_current_model(),
+        "thinking": get_current_thinking(),
+        "available_models": AVAILABLE_MODELS,
+        "thinking_levels": THINKING_LEVELS
+    }
+
+
+@router.post("/api/settings/model")
+async def update_model(user: str = Depends(require_auth), model: str = Form(...)):
+    """Update the model setting."""
+    valid_ids = [m["id"] for m in AVAILABLE_MODELS]
+    if model not in valid_ids:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Must be one of: {valid_ids}")
+
+    if set_current_model(model):
+        return {"status": "ok", "model": model}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save setting")
+
+
+@router.post("/api/settings/thinking")
+async def update_thinking(user: str = Depends(require_auth), thinking: str = Form(...)):
+    """Update the thinking level setting."""
+    valid_ids = [t["id"] for t in THINKING_LEVELS]
+    if thinking not in valid_ids:
+        raise HTTPException(status_code=400, detail=f"Invalid thinking level. Must be one of: {valid_ids}")
+
+    if set_current_thinking(thinking):
+        return {"status": "ok", "thinking": thinking}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save setting")
 
 
 # HTML Templates
@@ -856,9 +977,35 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- Model Settings Section -->
+        <div class="endpoints" style="margin-bottom: 2rem;">
+            <div class="chart-title">Model Settings</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem;">
+                <div>
+                    <label style="display: block; margin-bottom: 0.5rem; color: #555; font-weight: 500;">Model</label>
+                    <select id="modelSelect" style="width: 100%; padding: 0.75rem; border: 2px solid #e1e1e1; border-radius: 8px; font-size: 1rem;">
+                        {{ model_options }}
+                    </select>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 0.5rem; color: #555; font-weight: 500;">Thinking Level</label>
+                    <select id="thinkingSelect" style="width: 100%; padding: 0.75rem; border: 2px solid #e1e1e1; border-radius: 8px; font-size: 1rem;">
+                        {{ thinking_options }}
+                    </select>
+                </div>
+            </div>
+            <div style="margin-top: 1rem;">
+                <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                <span id="settingsStatus" style="margin-left: 1rem; color: #22c55e; display: none;">Saved!</span>
+            </div>
+            <p style="color: #888; font-size: 0.875rem; margin-top: 0.75rem;">
+                Note: Thinking is only supported for Gemini 3 models. Medium level is only available for Flash.
+            </p>
+        </div>
+
         <div class="actions">
-            <button class="btn btn-primary" onclick="refreshStats()">🔄 Refresh Stats</button>
-            <button class="btn btn-danger" onclick="resetStats()">🗑️ Reset Stats</button>
+            <button class="btn btn-primary" onclick="refreshStats()">Refresh Stats</button>
+            <button class="btn btn-danger" onclick="resetStats()">Reset Stats</button>
         </div>
 
         <p class="info-text">Stats are stored in Redis and persist across restarts. Dashboard auto-refreshes every 30 seconds.</p>
@@ -904,6 +1051,45 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 window.location.reload();
             } else {
                 alert('Failed to reset stats');
+            }
+        }
+
+        async function saveSettings() {
+            const model = document.getElementById('modelSelect').value;
+            const thinking = document.getElementById('thinkingSelect').value;
+            const statusEl = document.getElementById('settingsStatus');
+
+            try {
+                // Save model
+                const modelForm = new FormData();
+                modelForm.append('model', model);
+                const modelRes = await fetch('/dashboard/api/settings/model', {
+                    method: 'POST',
+                    body: modelForm
+                });
+
+                // Save thinking
+                const thinkingForm = new FormData();
+                thinkingForm.append('thinking', thinking);
+                const thinkingRes = await fetch('/dashboard/api/settings/thinking', {
+                    method: 'POST',
+                    body: thinkingForm
+                });
+
+                if (modelRes.ok && thinkingRes.ok) {
+                    statusEl.style.display = 'inline';
+                    statusEl.textContent = 'Saved!';
+                    statusEl.style.color = '#22c55e';
+                    setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+                } else {
+                    statusEl.style.display = 'inline';
+                    statusEl.textContent = 'Failed to save';
+                    statusEl.style.color = '#ef4444';
+                }
+            } catch (error) {
+                statusEl.style.display = 'inline';
+                statusEl.textContent = 'Error: ' + error.message;
+                statusEl.style.color = '#ef4444';
             }
         }
 

@@ -14,6 +14,7 @@ from google.protobuf.struct_pb2 import Struct
 from utils.vector_store import get_vector_store, check_index_status
 from inference.citations import generate_citations_for_documents
 from langchain_core.documents import Document
+from api.dashboard import get_current_model, get_current_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +96,6 @@ class StreamingChatInferencer:
 
     def __init__(self):
         self.vector_store = get_vector_store()
-        self.model = genai.GenerativeModel(
-            "gemini-3-flash-preview",
-            tools=[tools],
-            system_instruction=CHAT_SYSTEM_PROMPT
-        )
 
         # Check index status on init
         index_status = check_index_status()
@@ -109,6 +105,28 @@ class StreamingChatInferencer:
             logger.warning("Vector index is empty")
         else:
             logger.info(f"Vector index ready with {index_status['num_docs']} documents")
+
+    def _create_model(self, model_id: Optional[str] = None):
+        """Create a GenerativeModel with current settings."""
+        model_name = model_id or get_current_model()
+        thinking_level = get_current_thinking()
+
+        logger.info(f"Creating model: {model_name} with thinking: {thinking_level}")
+
+        # Build generation config with thinking if using Gemini 3
+        generation_config = None
+        if model_name.startswith("gemini-3"):
+            # Gemini 3 models support thinking_config
+            generation_config = {
+                "thinking_config": {"thinking_level": thinking_level}
+            }
+
+        return genai.GenerativeModel(
+            model_name,
+            tools=[tools],
+            system_instruction=CHAT_SYSTEM_PROMPT,
+            generation_config=generation_config
+        )
 
     def _search_messages(self, query: str, num_results: int = 8) -> List[Document]:
         """Execute a semantic search against the vector store."""
@@ -173,7 +191,8 @@ class StreamingChatInferencer:
         self,
         message: str,
         history: Optional[List[Dict[str, str]]] = None,
-        max_iterations: int = 10
+        max_iterations: int = 10,
+        model_override: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
         Stream a chat response with chain-of-thought visibility.
@@ -184,6 +203,9 @@ class StreamingChatInferencer:
         all_sources: List[tuple] = []  # List of (source_num, doc, formatted_text)
 
         try:
+            # Create model with current settings (or override)
+            model = self._create_model(model_override)
+
             # Build conversation context
             conversation_context = self._build_conversation_context(history, message)
 
@@ -202,7 +224,7 @@ When you have enough context, provide your final answer with source citations.""
                 "content": "Analyzing the question and planning searches..."
             })
 
-            chat = self.model.start_chat()
+            chat = model.start_chat()
             response = chat.send_message(initial_prompt)
 
             iteration = 0
