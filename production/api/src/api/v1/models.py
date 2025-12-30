@@ -29,6 +29,9 @@ class QueryResponse(BaseModel):
     answer: str
     sources: List[Source]
     query_time_ms: int
+    search_iterations: Optional[int] = Field(None, description="Number of search iterations the agent performed")
+    total_docs_retrieved: Optional[int] = Field(None, description="Total documents retrieved across all searches")
+    unique_docs: Optional[int] = Field(None, description="Unique documents after deduplication")
 
 
 # ============== Health ==============

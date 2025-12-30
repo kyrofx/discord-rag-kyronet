@@ -40,8 +40,8 @@ _inferencer = None
 def get_inferencer():
     global _inferencer
     if _inferencer is None:
-        from inference import Inferencer
-        _inferencer = Inferencer()
+        from inference.agentic_inference import AgenticInferencer
+        _inferencer = AgenticInferencer()
     return _inferencer
 
 
@@ -94,7 +94,10 @@ async def query(
         return QueryResponse(
             answer=result.get("answer", ""),
             sources=sources,
-            query_time_ms=query_time_ms
+            query_time_ms=query_time_ms,
+            search_iterations=result.get("iterations"),
+            total_docs_retrieved=result.get("total_docs_retrieved"),
+            unique_docs=result.get("unique_docs")
         )
 
     except Exception as e:
