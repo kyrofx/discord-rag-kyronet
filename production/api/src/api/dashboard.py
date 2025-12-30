@@ -3,6 +3,8 @@ Dashboard routes with authentication.
 """
 import os
 import secrets
+import subprocess
+import threading
 from datetime import datetime
 from functools import wraps
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Form
@@ -15,6 +17,14 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 # Simple session store (in production, use Redis)
 sessions: dict[str, dict] = {}
+
+# Track indexing job status
+indexing_status: dict = {
+    "running": False,
+    "last_run": None,
+    "last_result": None,
+    "error": None
+}
 
 # Dashboard credentials from environment
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
@@ -103,6 +113,8 @@ async def logout(request: Request):
 @router.get("", response_class=HTMLResponse)
 async def dashboard(request: Request):
     """Main dashboard page."""
+    import redis
+
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/dashboard/login", status_code=302)
@@ -124,6 +136,78 @@ async def dashboard(request: Request):
         except:
             last_query = stats.last_query_time
 
+    # Get index stats
+    from utils.vector_store import check_index_status
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    index_status = check_index_status()
+
+    total_messages = 0
+    vector_chunks = index_status.get("num_docs", 0)
+    indexed_channels = 0
+    oldest_timestamp = None
+    newest_timestamp = None
+    last_indexed = None
+    index_exists = index_status.get("exists", False)
+    index_error = index_status.get("error")
+
+    try:
+        r = redis.from_url(redis_url, decode_responses=True)
+        guild_keys = r.keys("discord_rag:guild:*:stats")
+        for key in guild_keys:
+            guild_stats = r.hgetall(key)
+            total_messages += int(guild_stats.get("total_messages", 0))
+            indexed_channels += int(guild_stats.get("indexed_channels", 0))
+
+            if guild_stats.get("oldest_message"):
+                ts = guild_stats.get("oldest_message")
+                if oldest_timestamp is None or ts < oldest_timestamp:
+                    oldest_timestamp = ts
+
+            if guild_stats.get("newest_message"):
+                ts = guild_stats.get("newest_message")
+                if newest_timestamp is None or ts > newest_timestamp:
+                    newest_timestamp = ts
+
+            if guild_stats.get("last_indexed"):
+                li = guild_stats.get("last_indexed")
+                if last_indexed is None or li > last_indexed:
+                    last_indexed = li
+    except Exception:
+        pass
+
+    # Format date range
+    date_range = "N/A"
+    if oldest_timestamp and newest_timestamp:
+        date_range = f"{oldest_timestamp} - {newest_timestamp}"
+
+    # Format last indexed
+    last_indexed_display = "Never"
+    if last_indexed:
+        try:
+            dt = datetime.fromisoformat(last_indexed)
+            last_indexed_display = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except:
+            last_indexed_display = last_indexed
+
+    # Index status display
+    if index_error:
+        index_status_display = f"Error: {index_error}"
+        index_status_class = "error"
+    elif not index_exists:
+        index_status_display = "Not Created"
+        index_status_class = "warning"
+    elif vector_chunks == 0:
+        index_status_display = "Empty"
+        index_status_class = "warning"
+    else:
+        index_status_display = "Ready"
+        index_status_class = "success"
+
+    # Indexing pipeline status
+    indexing_running = indexing_status.get("running", False)
+    indexing_last_result = indexing_status.get("last_result", "")
+
     return HTMLResponse(render_template(
         "dashboard",
         user=user,
@@ -137,6 +221,16 @@ async def dashboard(request: Request):
         last_query=last_query,
         hours_labels=hours_labels,
         hours_values=hours_values,
+        # Index stats
+        total_messages=total_messages,
+        vector_chunks=vector_chunks,
+        indexed_channels=indexed_channels,
+        date_range=date_range,
+        last_indexed=last_indexed_display,
+        index_status_display=index_status_display,
+        index_status_class=index_status_class,
+        indexing_running="true" if indexing_running else "false",
+        indexing_last_result=indexing_last_result,
     ))
 
 
@@ -168,6 +262,131 @@ async def reset_stats(user: str = Depends(require_auth)):
     tracker = get_stats_tracker()
     tracker.reset_stats()
     return {"status": "ok", "message": "Stats reset successfully"}
+
+
+@router.get("/api/index-stats")
+async def api_index_stats(user: str = Depends(require_auth)):
+    """Get index statistics."""
+    from utils.vector_store import check_index_status, INDEX_NAME
+    import redis
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+    # Get vector index status
+    index_status = check_index_status()
+
+    # Get guild stats from Redis (aggregate all guilds)
+    total_messages = 0
+    total_chunks = index_status.get("num_docs", 0)
+    indexed_channels = 0
+    oldest_timestamp = None
+    newest_timestamp = None
+    last_indexed = None
+
+    try:
+        r = redis.from_url(redis_url, decode_responses=True)
+        # Find all guild stats keys
+        guild_keys = r.keys("discord_rag:guild:*:stats")
+        for key in guild_keys:
+            stats = r.hgetall(key)
+            total_messages += int(stats.get("total_messages", 0))
+            indexed_channels += int(stats.get("indexed_channels", 0))
+
+            if stats.get("oldest_message"):
+                ts = stats.get("oldest_message")
+                if oldest_timestamp is None or ts < oldest_timestamp:
+                    oldest_timestamp = ts
+
+            if stats.get("newest_message"):
+                ts = stats.get("newest_message")
+                if newest_timestamp is None or ts > newest_timestamp:
+                    newest_timestamp = ts
+
+            if stats.get("last_indexed"):
+                li = stats.get("last_indexed")
+                if last_indexed is None or li > last_indexed:
+                    last_indexed = li
+    except Exception as e:
+        pass  # Redis stats are optional
+
+    return {
+        "index_name": INDEX_NAME,
+        "index_exists": index_status.get("exists", False),
+        "vector_chunks": total_chunks,
+        "total_messages": total_messages,
+        "indexed_channels": indexed_channels,
+        "oldest_timestamp": oldest_timestamp,
+        "newest_timestamp": newest_timestamp,
+        "last_indexed": last_indexed,
+        "error": index_status.get("error"),
+        "indexing_status": indexing_status
+    }
+
+
+def _run_indexing_pipeline():
+    """Run the indexing pipeline in a background thread."""
+    global indexing_status
+
+    indexing_status["running"] = True
+    indexing_status["error"] = None
+    indexing_status["last_run"] = datetime.utcnow().isoformat()
+
+    try:
+        # Run the indexing pipeline
+        result = subprocess.run(
+            ["python", "-m", "indexing_pipeline.main"],
+            cwd="/app/indexing_pipeline",  # Adjust path as needed for your deployment
+            capture_output=True,
+            text=True,
+            timeout=3600  # 1 hour timeout
+        )
+
+        if result.returncode == 0:
+            indexing_status["last_result"] = "success"
+            indexing_status["error"] = None
+        else:
+            indexing_status["last_result"] = "failed"
+            indexing_status["error"] = result.stderr[-1000:] if result.stderr else "Unknown error"
+
+    except subprocess.TimeoutExpired:
+        indexing_status["last_result"] = "timeout"
+        indexing_status["error"] = "Indexing timed out after 1 hour"
+    except FileNotFoundError:
+        indexing_status["last_result"] = "failed"
+        indexing_status["error"] = "Indexing pipeline not found. Make sure the indexing_pipeline package is installed."
+    except Exception as e:
+        indexing_status["last_result"] = "failed"
+        indexing_status["error"] = str(e)
+    finally:
+        indexing_status["running"] = False
+
+
+@router.post("/api/run-indexing")
+async def run_indexing(user: str = Depends(require_auth)):
+    """Trigger the indexing pipeline."""
+    global indexing_status
+
+    if indexing_status["running"]:
+        return {
+            "status": "already_running",
+            "message": "Indexing pipeline is already running",
+            "started_at": indexing_status["last_run"]
+        }
+
+    # Start indexing in background thread
+    thread = threading.Thread(target=_run_indexing_pipeline, daemon=True)
+    thread.start()
+
+    return {
+        "status": "started",
+        "message": "Indexing pipeline started in background"
+    }
+
+
+@router.get("/api/indexing-status")
+async def get_indexing_status(user: str = Depends(require_auth)):
+    """Get the current indexing pipeline status."""
+    return indexing_status
 
 
 # HTML Templates
@@ -395,6 +614,60 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             font-size: 0.875rem;
             margin-top: 1rem;
         }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .section-header h2 {
+            font-size: 1.25rem;
+            color: #333;
+            margin: 0;
+        }
+        .section-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-success {
+            background: #22c55e;
+            color: white;
+        }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .alert-success {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
         .endpoints {
             background: white;
             padding: 1.5rem;
@@ -434,6 +707,46 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="container">
+        <!-- Index Stats Section -->
+        <div class="section-header">
+            <h2>📚 Index Status</h2>
+            <div class="section-actions">
+                <button class="btn btn-primary" id="runIndexingBtn" onclick="runIndexing()">
+                    <span id="indexingBtnText">🔄 Run Indexing</span>
+                </button>
+            </div>
+        </div>
+        <div class="stats-grid" style="margin-bottom: 2rem;">
+            <div class="stat-card">
+                <div class="stat-label">Index Status</div>
+                <div class="stat-value {{ index_status_class }}">{{ index_status_display }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Messages</div>
+                <div class="stat-value highlight">{{ total_messages }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Vector Chunks</div>
+                <div class="stat-value">{{ vector_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Indexed Channels</div>
+                <div class="stat-value">{{ indexed_channels }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Date Range</div>
+                <div class="stat-value" style="font-size: 0.75rem;">{{ date_range }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Last Indexed</div>
+                <div class="stat-value" style="font-size: 0.75rem;">{{ last_indexed }}</div>
+            </div>
+        </div>
+
+        <!-- Query Stats Section -->
+        <div class="section-header">
+            <h2>📊 Query Statistics</h2>
+        </div>
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-label">Total Queries</div>
@@ -552,6 +865,77 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             } else {
                 alert('Failed to reset stats');
             }
+        }
+
+        // Indexing status
+        let indexingRunning = {{ indexing_running }};
+
+        async function runIndexing() {
+            const btn = document.getElementById('runIndexingBtn');
+            const btnText = document.getElementById('indexingBtnText');
+
+            if (indexingRunning) {
+                alert('Indexing is already running!');
+                return;
+            }
+
+            if (!confirm('This will rebuild the vector index from all messages in MongoDB. Continue?')) {
+                return;
+            }
+
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="spinner"></span>Starting...';
+
+            try {
+                const response = await fetch('/dashboard/api/run-indexing', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.status === 'started') {
+                    indexingRunning = true;
+                    btnText.innerHTML = '<span class="spinner"></span>Indexing...';
+                    alert('Indexing started! This may take several minutes. The page will refresh when complete.');
+                    checkIndexingStatus();
+                } else if (data.status === 'already_running') {
+                    alert('Indexing is already running!');
+                    btnText.innerHTML = '<span class="spinner"></span>Indexing...';
+                    checkIndexingStatus();
+                } else {
+                    btn.disabled = false;
+                    btnText.textContent = '🔄 Run Indexing';
+                    alert('Failed to start indexing: ' + (data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                btn.disabled = false;
+                btnText.textContent = '🔄 Run Indexing';
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function checkIndexingStatus() {
+            try {
+                const response = await fetch('/dashboard/api/indexing-status');
+                const status = await response.json();
+
+                if (status.running) {
+                    // Still running, check again in 5 seconds
+                    setTimeout(checkIndexingStatus, 5000);
+                } else {
+                    // Done, refresh the page
+                    window.location.reload();
+                }
+            } catch (error) {
+                // On error, just reload
+                setTimeout(() => window.location.reload(), 5000);
+            }
+        }
+
+        // If indexing was running on page load, monitor it
+        if (indexingRunning) {
+            const btn = document.getElementById('runIndexingBtn');
+            const btnText = document.getElementById('indexingBtnText');
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="spinner"></span>Indexing...';
+            checkIndexingStatus();
         }
 
         // Auto-refresh every 30 seconds
