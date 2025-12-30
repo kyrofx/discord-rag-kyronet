@@ -222,6 +222,14 @@ When you have enough context, provide your final answer with source citations.""
             chat = model.start_chat()
             response = chat.send_message(initial_prompt)
 
+            # Debug: log the raw response
+            logger.info(f"Initial response: {response}")
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                logger.info(f"Finish reason: {candidate.finish_reason}")
+                if hasattr(candidate, 'content'):
+                    logger.info(f"Content parts: {candidate.content.parts}")
+
             iteration = 0
             while iteration < max_iterations:
                 iteration += 1
@@ -233,7 +241,18 @@ When you have enough context, provide your final answer with source citations.""
                         function_calls.append(part.function_call)
 
                 if not function_calls:
-                    # No function calls - model is done, extract and stream the answer
+                    # No function calls - check if we have any text
+                    has_text = any(hasattr(p, 'text') and p.text for p in response.parts)
+                    if not has_text:
+                        logger.warning(f"Empty response from model, no function calls or text")
+                        # Try to prompt the model to use the search tool
+                        yield create_sse_event("thinking", {
+                            "content": "Model didn't respond, retrying with explicit instruction..."
+                        })
+                        response = chat.send_message(
+                            "Please use the search_messages tool to find relevant information before answering."
+                        )
+                        continue
                     break
 
                 # Process each function call
