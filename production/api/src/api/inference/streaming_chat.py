@@ -122,18 +122,28 @@ class StreamingChatInferencer:
             logger.error(f"Search error: {e}")
             return []
 
-    def _format_search_results(self, docs: List[Document], source_offset: int = 0) -> str:
-        """Format search results for the agent to read."""
-        if not docs:
-            return "No results found for this search."
+    def _format_search_results(self, docs: List[Document], source_offset: int = 0) -> List[tuple]:
+        """Format search results for the agent to read.
 
-        parts = []
+        Returns list of (source_num, doc, formatted_text) tuples.
+        """
+        if not docs:
+            return []
+
+        results = []
         for i, doc in enumerate(docs):
             source_num = source_offset + i + 1
             timestamp = doc.metadata.get('timestamp', 'unknown')
-            parts.append(f"[Source {source_num}] (timestamp: {timestamp})\n{doc.page_content}")
+            formatted = f"[Source {source_num}] (timestamp: {timestamp})\n{doc.page_content}"
+            results.append((source_num, doc, formatted))
 
-        return "\n\n---\n\n".join(parts)
+        return results
+
+    def _results_to_text(self, results: List[tuple]) -> str:
+        """Convert results tuples to text for the agent."""
+        if not results:
+            return "No results found for this search."
+        return "\n\n---\n\n".join(r[2] for r in results)
 
     def _deduplicate_docs(self, docs: List[Document]) -> List[Document]:
         """Remove duplicate documents based on content."""
@@ -171,7 +181,7 @@ class StreamingChatInferencer:
         Yields SSE-formatted strings for each event.
         """
         history = history or []
-        all_docs: List[Document] = []
+        all_sources: List[tuple] = []  # List of (source_num, doc, formatted_text)
 
         try:
             # Build conversation context
@@ -228,10 +238,11 @@ When you have enough context, provide your final answer with source citations.""
                         logger.info(f"Agent search #{iteration}: '{query}' (k={num_results})")
 
                         docs = self._search_messages(query, num_results)
-                        all_docs.extend(docs)
 
-                        # Format results
-                        results_text = self._format_search_results(docs, len(all_docs) - len(docs))
+                        # Format results with source numbers
+                        search_results = self._format_search_results(docs, len(all_sources))
+                        all_sources.extend(search_results)
+                        results_text = self._results_to_text(search_results)
 
                         # Yield tool_result event with preview
                         yield create_sse_event("tool_result", {
@@ -273,10 +284,47 @@ When you have enough context, provide your final answer with source citations.""
                 chunk = final_answer[i:i + chunk_size]
                 yield create_sse_event("content", {"text": chunk})
 
-            # Process sources
-            unique_docs = self._deduplicate_docs(all_docs)
-            sorted_docs = sorted(unique_docs, key=lambda x: x.metadata.get("timestamp", 0))
-            sources = generate_citations_for_documents(sorted_docs)
+            # Extract which source numbers the AI actually referenced
+            # Match various formats: [Source 1], (Source 1), Source 1, [1], (1, 2, 3)
+            import re
+            # Find all numbers that appear to be source references
+            patterns = [
+                r'\[Source (\d+)\]',      # [Source 1]
+                r'\(Source (\d+)',         # (Source 1 or (Source 1, 2)
+                r'Source (\d+)',           # Source 1
+                r'\[(\d+)\]',              # [1]
+                r'\((\d+)(?:,|\))',        # (1) or (1, 2)
+            ]
+            referenced_nums = set()
+            for pattern in patterns:
+                referenced_nums.update(int(m) for m in re.findall(pattern, final_answer))
+
+            # Build sources dict preserving original numbers, deduplicating by content
+            seen_content = set()
+            sources = []
+            for source_num, doc, _ in all_sources:
+                if source_num not in referenced_nums:
+                    continue
+                content_hash = hash(doc.page_content)
+                if content_hash in seen_content:
+                    continue
+                seen_content.add(content_hash)
+
+                metadata = doc.metadata or {}
+                url = metadata.get('url', '')
+                content = doc.page_content or ''
+                snippet = content[:300] + "..." if len(content) > 300 else content
+
+                sources.append({
+                    'source_number': source_num,
+                    'snippet': snippet,
+                    'urls': [url] if url else [],
+                    'timestamp': metadata.get('timestamp'),
+                    'channel': metadata.get('channel')
+                })
+
+            # Sort by source number for consistent display
+            sources.sort(key=lambda x: x['source_number'])
 
             # Yield sources
             if sources:
@@ -285,11 +333,11 @@ When you have enough context, provide your final answer with source citations.""
             # Yield completion event
             yield create_sse_event("done", {
                 "iterations": iteration,
-                "total_docs_retrieved": len(all_docs),
-                "unique_docs": len(unique_docs)
+                "total_docs_retrieved": len(all_sources),
+                "unique_sources_cited": len(sources)
             })
 
-            logger.info(f"Streaming chat complete. {iteration} iterations, {len(unique_docs)} unique docs")
+            logger.info(f"Streaming chat complete. {iteration} iterations, {len(sources)} sources cited")
 
         except Exception as e:
             logger.error(f"Streaming chat error: {e}", exc_info=True)
