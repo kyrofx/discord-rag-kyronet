@@ -68,7 +68,7 @@ class AgenticInferencer:
     def __init__(self):
         self.vector_store = get_vector_store()
         self.model = genai.GenerativeModel(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             tools=[tools],
             system_instruction=AGENT_SYSTEM_PROMPT
         )
