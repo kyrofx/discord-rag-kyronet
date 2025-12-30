@@ -1,7 +1,8 @@
 import os
 import logging
 import google.generativeai as genai
-from google.generativeai.types import FunctionDeclaration, Tool, content_types
+from google.generativeai.types import FunctionDeclaration, Tool
+from google.protobuf.struct_pb2 import Struct
 from utils.vector_store import get_vector_store, check_index_status
 from inference.citations import generate_citations_for_documents
 from langchain_core.documents import Document
@@ -155,7 +156,7 @@ When you have enough context, provide your final answer with source citations.""
                 break
 
             # Process each function call
-            function_responses = []
+            function_response_parts = []
             for fc in function_calls:
                 if fc.name == "search_messages":
                     args = dict(fc.args)
@@ -170,18 +171,22 @@ When you have enough context, provide your final answer with source citations.""
                     # Format results for the agent
                     results_text = self._format_search_results(docs, len(all_docs) - len(docs))
 
-                    function_responses.append(
-                        content_types.to_content({
-                            "function_response": {
-                                "name": fc.name,
-                                "response": {"results": results_text}
-                            }
-                        })
+                    # Create function response part
+                    response_struct = Struct()
+                    response_struct.update({"results": results_text})
+
+                    function_response_parts.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=fc.name,
+                                response=response_struct
+                            )
+                        )
                     )
 
             # Send function results back to the model
-            if function_responses:
-                response = chat.send_message(function_responses)
+            if function_response_parts:
+                response = chat.send_message(function_response_parts)
 
         # Extract final answer from the last response
         final_answer = ""
