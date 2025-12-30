@@ -8,6 +8,7 @@ import json
 import redis
 from datetime import datetime
 from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from typing import Optional
 
 from auth import verify_api_key
@@ -25,6 +26,7 @@ from v1.models import (
     EmbedRequest, EmbedResponse,
     IndexStatusResponse,
     UserImportRequest, UserImportStartResponse, UserImportStatusResponse,
+    ChatRequest,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -104,6 +106,47 @@ async def query(
         query_time_ms = int((time.time() - start_time) * 1000)
         tracker.record_query(query_time_ms, 0, success=False)
         raise InternalError(f"Query failed: {str(e)}")
+
+
+@router.post("/chat")
+async def chat(
+    request: ChatRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Chat endpoint with streaming chain-of-thought.
+
+    Returns a Server-Sent Events stream with the following event types:
+    - thinking: Agent's reasoning process
+    - tool_call: When the agent calls a search tool
+    - tool_result: Results from the search
+    - content: Final answer content (streamed in chunks)
+    - sources: Citation sources
+    - done: Completion event with metadata
+    - error: Error event
+
+    Use EventSource or fetch with stream reading to consume this endpoint.
+    """
+    from inference.streaming_chat import get_streaming_inferencer
+
+    inferencer = get_streaming_inferencer()
+
+    # Convert history to list of dicts
+    history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+
+    def generate():
+        for event in inferencer.chat_stream(request.message, history):
+            yield event
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # ============== Ingestion & Indexing ==============

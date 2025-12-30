@@ -157,3 +157,17 @@ class UserImportStatusResponse(BaseModel):
     error: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+
+
+# ============== Chat (Streaming) ==============
+
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="Message role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., description="The user's message")
+    history: List[ChatMessage] = Field(default_factory=list, description="Previous messages in the conversation")
+    guild_id: str = Field(..., description="Discord guild/server ID")
+    channel_ids: Optional[List[str]] = Field(None, description="Filter to specific channels")
