@@ -835,3 +835,159 @@ async def admin_reset_query_stats(admin: dict = Depends(require_admin)):
     tracker = get_stats_tracker()
     tracker.reset_stats()
     return {"status": "ok", "message": "Stats reset successfully"}
+
+
+# ============== Admin: Discord Bot Management ==============
+
+@router.get("/admin/discord")
+async def admin_get_discord_settings(admin: dict = Depends(require_admin)):
+    """Get Discord bot settings (admin only)."""
+    r = get_redis()
+
+    # Get channel IDs - prefer Redis override, fall back to env
+    channel_ids_redis = r.get("discord_rag:settings:channel_ids")
+    if channel_ids_redis:
+        channel_ids = [c.strip() for c in channel_ids_redis.split(",") if c.strip()]
+    else:
+        channel_ids_env = os.getenv("DISCORD_CHANNEL_IDS", "")
+        channel_ids = [c.strip() for c in channel_ids_env.split(",") if c.strip()]
+
+    # Get scheduler settings from Redis (or env defaults)
+    schedule_cron = r.get("discord_rag:settings:schedule_cron") or os.getenv("SCHEDULE_CRON", "0 3 * * *")
+    quiet_period = r.get("discord_rag:settings:quiet_period_minutes") or os.getenv("QUIET_PERIOD_MINUTES", "15")
+    backoff = r.get("discord_rag:settings:backoff_minutes") or os.getenv("BACKOFF_MINUTES", "10")
+
+    return {
+        "bot_token_set": bool(os.getenv("DISCORD_BOT_TOKEN")),
+        "bot_client_id": os.getenv("DISCORD_BOT_CLIENT_ID", ""),
+        "channel_ids": channel_ids,
+        "schedule_cron": schedule_cron,
+        "quiet_period_minutes": int(quiet_period),
+        "backoff_minutes": int(backoff),
+        "auto_ingest_enabled": r.get("discord_rag:settings:auto_ingest_enabled") != "false",
+    }
+
+
+@router.post("/admin/discord/channels")
+async def admin_update_discord_channels(
+    channel_ids: str = Form(..., description="Comma-separated channel IDs"),
+    admin: dict = Depends(require_admin)
+):
+    """Update Discord channel IDs to monitor (admin only)."""
+    r = get_redis()
+
+    # Validate and clean channel IDs
+    ids = [c.strip() for c in channel_ids.split(",") if c.strip()]
+
+    # Store in Redis
+    r.set("discord_rag:settings:channel_ids", ",".join(ids))
+
+    return {"status": "ok", "channel_ids": ids}
+
+
+@router.post("/admin/discord/scheduler")
+async def admin_update_scheduler_settings(
+    schedule_cron: Optional[str] = Form(None),
+    quiet_period_minutes: Optional[int] = Form(None),
+    backoff_minutes: Optional[int] = Form(None),
+    auto_ingest_enabled: Optional[bool] = Form(None),
+    admin: dict = Depends(require_admin)
+):
+    """Update scheduler settings (admin only)."""
+    r = get_redis()
+
+    if schedule_cron is not None:
+        # Basic validation of cron expression (5 parts)
+        parts = schedule_cron.strip().split()
+        if len(parts) != 5:
+            raise HTTPException(status_code=400, detail="Invalid cron expression. Must have 5 parts.")
+        r.set("discord_rag:settings:schedule_cron", schedule_cron.strip())
+
+    if quiet_period_minutes is not None:
+        if quiet_period_minutes < 0 or quiet_period_minutes > 1440:
+            raise HTTPException(status_code=400, detail="quiet_period_minutes must be between 0 and 1440")
+        r.set("discord_rag:settings:quiet_period_minutes", str(quiet_period_minutes))
+
+    if backoff_minutes is not None:
+        if backoff_minutes < 0 or backoff_minutes > 1440:
+            raise HTTPException(status_code=400, detail="backoff_minutes must be between 0 and 1440")
+        r.set("discord_rag:settings:backoff_minutes", str(backoff_minutes))
+
+    if auto_ingest_enabled is not None:
+        r.set("discord_rag:settings:auto_ingest_enabled", "true" if auto_ingest_enabled else "false")
+
+    return {"status": "ok"}
+
+
+@router.post("/admin/discord/ingest")
+async def admin_trigger_ingestion(
+    channel_id: Optional[str] = Form(None, description="Specific channel to ingest (optional)"),
+    admin: dict = Depends(require_admin)
+):
+    """Trigger manual message ingestion (admin only)."""
+    r = get_redis()
+
+    # Queue an ingestion job
+    import json
+    from datetime import datetime
+
+    job_id = f"manual_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    job_data = {
+        "job_id": job_id,
+        "type": "ingest",
+        "channel_id": channel_id,
+        "triggered_by": admin.get("username", "admin"),
+        "triggered_at": datetime.utcnow().isoformat(),
+    }
+
+    # Push to ingestion queue
+    r.lpush("discord_rag:ingest_queue", json.dumps(job_data))
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "message": f"Ingestion job queued{' for channel ' + channel_id if channel_id else ' for all channels'}"
+    }
+
+
+@router.get("/admin/discord/jobs")
+async def admin_get_ingestion_jobs(
+    limit: int = Query(10, ge=1, le=50),
+    admin: dict = Depends(require_admin)
+):
+    """Get recent ingestion jobs (admin only)."""
+    r = get_redis()
+
+    # Get job history from Redis
+    jobs = []
+    job_keys = r.keys("discord_rag:job:*")
+
+    for key in sorted(job_keys, reverse=True)[:limit]:
+        job_data = r.hgetall(key)
+        if job_data:
+            jobs.append(job_data)
+
+    return {"jobs": jobs}
+
+
+@router.get("/admin/discord/guilds")
+async def admin_get_indexed_guilds(admin: dict = Depends(require_admin)):
+    """Get all indexed guilds with stats (admin only)."""
+    r = get_redis()
+
+    guilds = []
+    guild_keys = r.keys("discord_rag:guild:*:stats")
+
+    for key in guild_keys:
+        guild_id = key.split(":")[2]
+        stats = r.hgetall(key)
+        guilds.append({
+            "guild_id": guild_id,
+            "total_messages": int(stats.get("total_messages", 0)),
+            "indexed_channels": int(stats.get("indexed_channels", 0)),
+            "oldest_message": stats.get("oldest_message"),
+            "newest_message": stats.get("newest_message"),
+            "last_indexed": stats.get("last_indexed"),
+        })
+
+    return {"guilds": guilds}

@@ -299,6 +299,7 @@ async def admin_page(request: Request):
                 <a href="#stats" class="admin-nav-item active" onclick="showSection('stats')">📊 Statistics</a>
                 <a href="#users" class="admin-nav-item" onclick="showSection('users')">👥 Users</a>
                 <a href="#invites" class="admin-nav-item" onclick="showSection('invites')">🎟️ Invite Codes</a>
+                <a href="#discord" class="admin-nav-item" onclick="showSection('discord')">🤖 Discord Bot</a>
                 <a href="#settings" class="admin-nav-item" onclick="showSection('settings')">⚙️ Settings</a>
                 <a href="#indexing" class="admin-nav-item" onclick="showSection('indexing')">📚 Indexing</a>
             </nav>
@@ -371,6 +372,85 @@ async def admin_page(request: Request):
                         <tbody id="invitesTableBody">
                         </tbody>
                     </table>
+                </div>
+            </section>
+
+            <!-- Discord Section -->
+            <section id="discord-section" class="admin-section">
+                <h2>Discord Bot Management</h2>
+
+                <div class="settings-group">
+                    <h3>Bot Status</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Bot Token</div>
+                            <div class="stat-value" id="discordBotStatus">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Client ID</div>
+                            <div class="stat-value" id="discordClientId" style="font-size: 0.75rem;">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <h3>Monitored Channels</h3>
+                    <div class="form-group">
+                        <label for="discordChannelIds">Channel IDs (comma-separated)</label>
+                        <input type="text" id="discordChannelIds" placeholder="123456789,987654321" style="width: 100%;">
+                    </div>
+                    <button class="btn btn-primary" onclick="saveDiscordChannels()">Save Channels</button>
+                </div>
+
+                <div class="settings-group">
+                    <h3>Scheduler Settings</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="autoIngestEnabled"> Auto-ingest Enabled
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="scheduleCron">Cron Schedule</label>
+                        <input type="text" id="scheduleCron" placeholder="0 3 * * *">
+                        <small>Format: minute hour day month weekday (e.g., "0 3 * * *" = 3 AM daily)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="quietPeriod">Quiet Period (minutes)</label>
+                        <input type="number" id="quietPeriod" min="0" max="1440">
+                    </div>
+                    <div class="form-group">
+                        <label for="backoffMinutes">Backoff (minutes)</label>
+                        <input type="number" id="backoffMinutes" min="0" max="1440">
+                    </div>
+                    <button class="btn btn-primary" onclick="saveSchedulerSettings()">Save Scheduler Settings</button>
+                </div>
+
+                <div class="settings-group">
+                    <h3>Manual Ingestion</h3>
+                    <div class="form-group">
+                        <label for="ingestChannelId">Channel ID (optional, leave empty for all)</label>
+                        <input type="text" id="ingestChannelId" placeholder="Optional: specific channel ID">
+                    </div>
+                    <button class="btn btn-primary" onclick="triggerIngestion()">🔄 Trigger Ingestion</button>
+                    <div id="ingestStatus" style="margin-top: 0.5rem;"></div>
+                </div>
+
+                <div class="settings-group">
+                    <h3>Indexed Guilds</h3>
+                    <div class="table-container">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>Guild ID</th>
+                                    <th>Messages</th>
+                                    <th>Channels</th>
+                                    <th>Last Indexed</th>
+                                </tr>
+                            </thead>
+                            <tbody id="guildsTableBody">
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
@@ -1450,6 +1530,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadInvites();
     loadSettings();
     loadIndexStats();
+    loadDiscordSettings();
 });
 
 function showSection(name) {
@@ -1679,5 +1760,120 @@ async function checkIndexingStatus() {
 function editUser(id) {
     // TODO: Implement user edit modal
     alert('Edit user: ' + id);
+}
+
+// ============== Discord Management ==============
+
+async function loadDiscordSettings() {
+    try {
+        const [discordRes, guildsRes] = await Promise.all([
+            fetch('/platform/admin/discord'),
+            fetch('/platform/admin/discord/guilds')
+        ]);
+
+        const discord = await discordRes.json();
+        const guildsData = await guildsRes.json();
+
+        // Bot status
+        document.getElementById('discordBotStatus').textContent = discord.bot_token_set ? '✅ Configured' : '❌ Not Set';
+        document.getElementById('discordClientId').textContent = discord.bot_client_id || 'Not Set';
+
+        // Channel IDs
+        document.getElementById('discordChannelIds').value = discord.channel_ids.join(', ');
+
+        // Scheduler settings
+        document.getElementById('autoIngestEnabled').checked = discord.auto_ingest_enabled;
+        document.getElementById('scheduleCron').value = discord.schedule_cron;
+        document.getElementById('quietPeriod').value = discord.quiet_period_minutes;
+        document.getElementById('backoffMinutes').value = discord.backoff_minutes;
+
+        // Guilds table
+        document.getElementById('guildsTableBody').innerHTML = guildsData.guilds.map(g => `
+            <tr>
+                <td><code>${g.guild_id}</code></td>
+                <td>${g.total_messages}</td>
+                <td>${g.indexed_channels}</td>
+                <td>${g.last_indexed ? new Date(g.last_indexed).toLocaleString() : 'Never'}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="4">No guilds indexed yet</td></tr>';
+
+    } catch (err) {
+        console.error('Failed to load Discord settings:', err);
+    }
+}
+
+async function saveDiscordChannels() {
+    const channelIds = document.getElementById('discordChannelIds').value;
+
+    try {
+        const res = await fetch('/platform/admin/discord/channels', {
+            method: 'POST',
+            body: new URLSearchParams({ channel_ids: channelIds })
+        });
+
+        if (res.ok) {
+            alert('Channel IDs saved!');
+            loadDiscordSettings();
+        } else {
+            const data = await res.json();
+            alert('Failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch {
+        alert('Failed to save channel IDs');
+    }
+}
+
+async function saveSchedulerSettings() {
+    const formData = new URLSearchParams();
+    formData.append('auto_ingest_enabled', document.getElementById('autoIngestEnabled').checked);
+    formData.append('schedule_cron', document.getElementById('scheduleCron').value);
+    formData.append('quiet_period_minutes', document.getElementById('quietPeriod').value);
+    formData.append('backoff_minutes', document.getElementById('backoffMinutes').value);
+
+    try {
+        const res = await fetch('/platform/admin/discord/scheduler', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (res.ok) {
+            alert('Scheduler settings saved!');
+        } else {
+            const data = await res.json();
+            alert('Failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch {
+        alert('Failed to save scheduler settings');
+    }
+}
+
+async function triggerIngestion() {
+    const channelId = document.getElementById('ingestChannelId').value.trim();
+    const statusEl = document.getElementById('ingestStatus');
+
+    const formData = new URLSearchParams();
+    if (channelId) {
+        formData.append('channel_id', channelId);
+    }
+
+    try {
+        statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Triggering ingestion...</span>';
+
+        const res = await fetch('/platform/admin/discord/ingest', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            statusEl.innerHTML = `<span style="color: var(--success);">✅ ${data.message}</span>`;
+            loadDiscordSettings();
+        } else {
+            statusEl.innerHTML = `<span style="color: var(--error);">❌ ${data.detail || 'Failed'}</span>`;
+        }
+    } catch {
+        statusEl.innerHTML = '<span style="color: var(--error);">❌ Network error</span>';
+    }
 }
 """
