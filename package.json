@@ -9,7 +9,7 @@
   "workspaces": [
     "bot/src",
     "scheduler/src",
-    "production/api"
+    "initial_ingestion/src"
   ],
   "repository": {
     "type": "git",
