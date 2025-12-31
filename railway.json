@@ -3,7 +3,7 @@
   "services": [
     {
       "name": "api",
-      "source": "production/api",
+      "source": "production",
       "dockerfile": "production/api/Dockerfile",
       "build": {
         "buildCommand": "",
