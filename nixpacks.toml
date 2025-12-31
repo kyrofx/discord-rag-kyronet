@@ -1,0 +1,17 @@
+# Nixpacks configuration for Discord RAG monorepo
+# This is a multi-service project where each service is built from its own subdirectory
+# The root directory should not be built as a standalone service
+
+[phases.setup]
+
+[phases.install]
+# Skip install phase for root directory
+cmds = []
+
+[phases.build]
+# Skip build phase for root directory  
+cmds = []
+
+[start]
+# This is a monorepo - services are defined in railway.json/railway.toml
+cmd = "echo 'This is a monorepo. Services are built from their respective subdirectories.'"
