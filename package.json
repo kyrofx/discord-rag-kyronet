@@ -1,0 +1,19 @@
+{
+  "name": "discord-rag-monorepo",
+  "version": "1.0.0",
+  "description": "Discord RAG multi-service application",
+  "private": true,
+  "scripts": {
+    "start": "echo 'This is a monorepo. Services are built from their respective subdirectories (bot, scheduler, production/api). See railway.json for service configurations.'"
+  },
+  "workspaces": [
+    "bot/src",
+    "scheduler/src",
+    "initial_ingestion/src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kyrofx/discord-rag-kyronet"
+  },
+  "license": "MIT"
+}
