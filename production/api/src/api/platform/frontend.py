@@ -62,7 +62,7 @@ async def login_page(request: Request, error: str = "", registered: str = ""):
     <div class="auth-container">
         <div class="auth-card">
             <div class="auth-header">
-                <div class="logo">💬</div>
+                <div class="logo">Chat</div>
                 <h1>{APP_NAME}</h1>
                 <p>Sign in to continue</p>
             </div>
@@ -132,7 +132,7 @@ async def register_page(request: Request, error: str = ""):
     <div class="auth-container">
         <div class="auth-card">
             <div class="auth-header">
-                <div class="logo">💬</div>
+                <div class="logo">Chat</div>
                 <h1>Join {APP_NAME}</h1>
                 <p>Create your account</p>
             </div>
@@ -208,7 +208,7 @@ async def chat_page(request: Request, conversation_id: str = None):
         return RedirectResponse(url="/login", status_code=302)
 
     is_admin = user.get("role") == "admin"
-    admin_link = '<a href="/admin" class="sidebar-link">⚙️ Admin</a>' if is_admin else ""
+    admin_link = '<a href="/admin" class="sidebar-link">Admin</a>' if is_admin else ""
 
     return HTMLResponse(render_page("Chat", f"""
     <div class="chat-layout">
@@ -224,24 +224,24 @@ async def chat_page(request: Request, conversation_id: str = None):
             </div>
             <div class="sidebar-footer">
                 <div class="user-info">
-                    <span class="user-avatar">👤</span>
+                    <span class="user-avatar">U</span>
                     <span class="user-name">{user.get('username', 'User')}</span>
                 </div>
                 {admin_link}
-                <a href="#" onclick="logout()" class="sidebar-link">🚪 Logout</a>
+                <a href="#" onclick="logout()" class="sidebar-link">Logout</a>
             </div>
         </aside>
 
         <!-- Main Chat Area -->
         <main class="chat-main">
             <header class="chat-header">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+                <button class="sidebar-toggle" onclick="toggleSidebar()">=</button>
                 <h1 id="chatTitle">New Chat</h1>
             </header>
 
             <div class="messages-container" id="messagesContainer">
                 <div class="welcome-message" id="welcomeMessage">
-                    <div class="welcome-icon">💬</div>
+                    <div class="welcome-icon"></div>
                     <h2>Welcome to {APP_NAME}</h2>
                     <p>Ask questions about the Discord chat history. I'll search through messages and provide answers with sources.</p>
                 </div>
@@ -250,7 +250,7 @@ async def chat_page(request: Request, conversation_id: str = None):
             <!-- Thinking/Status Panel -->
             <div class="thinking-panel" id="thinkingPanel" style="display: none;">
                 <div class="thinking-header">
-                    <span class="thinking-icon">🔍</span>
+                    <span class="thinking-icon">...</span>
                     <span class="thinking-title">Searching...</span>
                 </div>
                 <div class="thinking-content" id="thinkingContent"></div>
@@ -293,18 +293,18 @@ async def admin_page(request: Request):
     <div class="admin-layout">
         <aside class="admin-sidebar">
             <div class="admin-logo">
-                <a href="/chat">💬 {APP_NAME}</a>
+                <a href="/chat">{APP_NAME}</a>
             </div>
             <nav class="admin-nav">
-                <a href="#stats" class="admin-nav-item active" onclick="showSection('stats')">📊 Statistics</a>
-                <a href="#users" class="admin-nav-item" onclick="showSection('users')">👥 Users</a>
-                <a href="#invites" class="admin-nav-item" onclick="showSection('invites')">🎟️ Invite Codes</a>
-                <a href="#discord" class="admin-nav-item" onclick="showSection('discord')">🤖 Discord Bot</a>
-                <a href="#settings" class="admin-nav-item" onclick="showSection('settings')">⚙️ Settings</a>
-                <a href="#indexing" class="admin-nav-item" onclick="showSection('indexing')">📚 Indexing</a>
+                <a href="#stats" class="admin-nav-item active" onclick="showSection('stats')">Statistics</a>
+                <a href="#users" class="admin-nav-item" onclick="showSection('users')">Users</a>
+                <a href="#invites" class="admin-nav-item" onclick="showSection('invites')">Invite Codes</a>
+                <a href="#discord" class="admin-nav-item" onclick="showSection('discord')">Discord Bot</a>
+                <a href="#settings" class="admin-nav-item" onclick="showSection('settings')">Settings</a>
+                <a href="#indexing" class="admin-nav-item" onclick="showSection('indexing')">Indexing</a>
             </nav>
             <div class="admin-sidebar-footer">
-                <a href="/chat">← Back to Chat</a>
+                <a href="/chat">Back to Chat</a>
             </div>
         </aside>
 
@@ -431,7 +431,7 @@ async def admin_page(request: Request):
                         <label for="ingestChannelId">Channel ID (optional, leave empty for all)</label>
                         <input type="text" id="ingestChannelId" placeholder="Optional: specific channel ID">
                     </div>
-                    <button class="btn btn-primary" onclick="triggerIngestion()">🔄 Trigger Ingestion</button>
+                    <button class="btn btn-primary" onclick="triggerIngestion()">Trigger Ingestion</button>
                     <div id="ingestStatus" style="margin-top: 0.5rem;"></div>
                 </div>
 
@@ -500,7 +500,7 @@ async def admin_page(request: Request):
                     <div class="stat-card"><div class="stat-label">Channels</div><div class="stat-value" id="indexChannels">-</div></div>
                 </div>
                 <div class="section-actions">
-                    <button class="btn btn-primary" id="runIndexingBtn" onclick="runIndexing()">🔄 Run Indexing</button>
+                    <button class="btn btn-primary" id="runIndexingBtn" onclick="runIndexing()">Run Indexing</button>
                 </div>
                 <div id="indexingStatus"></div>
             </section>
@@ -1378,7 +1378,7 @@ function handleSSEEvent(data, contentEl, thinkingContent, sources) {
         // Tool call
         const item = document.createElement('div');
         item.className = 'thinking-item';
-        item.textContent = `🔍 Searching: "${data.query}"`;
+        item.textContent = `Searching: "${data.query}"`;
         thinkingContent.appendChild(item);
     }
     if (data.text) {
@@ -1403,7 +1403,7 @@ function addMessage(role, content) {
     msg.className = 'message ' + role;
     msg.innerHTML = `
         <div class="message-header">
-            ${role === 'user' ? '👤 You' : '🤖 Assistant'}
+            ${role === 'user' ? 'You' : 'Assistant'}
         </div>
         <div class="message-content">${escapeHtml(content)}</div>
     `;
@@ -1453,7 +1453,7 @@ async function loadConversations() {
             <div class="conversation-item ${c.id === currentConversationId ? 'active' : ''}"
                  onclick="loadConversation('${c.id}')">
                 <span class="title">${escapeHtml(c.title)}</span>
-                <button class="delete-btn" onclick="event.stopPropagation(); deleteConversation('${c.id}')">🗑</button>
+                <button class="delete-btn" onclick="event.stopPropagation(); deleteConversation('${c.id}')">x</button>
             </div>
         `).join('');
     } catch {}
@@ -1490,7 +1490,7 @@ async function newConversation() {
     document.getElementById('chatTitle').textContent = 'New Chat';
     document.getElementById('messagesContainer').innerHTML = `
         <div class="welcome-message" id="welcomeMessage">
-            <div class="welcome-icon">💬</div>
+            <div class="welcome-icon"></div>
             <h2>Start a new conversation</h2>
             <p>Ask questions about the Discord chat history.</p>
         </div>
@@ -1596,7 +1596,7 @@ async function loadInvites() {
                 <td>${c.current_uses}/${c.max_uses}</td>
                 <td>${c.expires_at ? new Date(c.expires_at).toLocaleDateString() : 'Never'}</td>
                 <td>${c.note || '-'}</td>
-                <td>${c.is_active ? '✅ Active' : '❌ Inactive'}</td>
+                <td>${c.is_active ? 'Active' : 'Inactive'}</td>
                 <td>
                     ${c.is_active ? `<button class="btn" onclick="deactivateInvite('${c.code}')">Deactivate</button>` : ''}
                 </td>
@@ -1722,7 +1722,7 @@ async function deactivateInvite(code) {
 async function runIndexing() {
     const btn = document.getElementById('runIndexingBtn');
     btn.disabled = true;
-    btn.textContent = '⏳ Running...';
+    btn.textContent = 'Running...';
 
     try {
         const res = await fetch('/platform/admin/indexing/run', {method: 'POST'});
@@ -1733,11 +1733,11 @@ async function runIndexing() {
         } else {
             alert(data.message);
             btn.disabled = false;
-            btn.textContent = '🔄 Run Indexing';
+            btn.textContent = 'Run Indexing';
         }
     } catch {
         btn.disabled = false;
-        btn.textContent = '🔄 Run Indexing';
+        btn.textContent = 'Run Indexing';
     }
 }
 
@@ -1750,7 +1750,7 @@ async function checkIndexingStatus() {
             setTimeout(checkIndexingStatus, 2000);
         } else {
             document.getElementById('runIndexingBtn').disabled = false;
-            document.getElementById('runIndexingBtn').textContent = '🔄 Run Indexing';
+            document.getElementById('runIndexingBtn').textContent = 'Run Indexing';
             loadIndexStats();
             alert('Indexing complete!');
         }
@@ -1775,7 +1775,7 @@ async function loadDiscordSettings() {
         const guildsData = await guildsRes.json();
 
         // Bot status
-        document.getElementById('discordBotStatus').textContent = discord.bot_token_set ? '✅ Configured' : '❌ Not Set';
+        document.getElementById('discordBotStatus').textContent = discord.bot_token_set ? 'Configured' : 'Not Set';
         document.getElementById('discordClientId').textContent = discord.bot_client_id || 'Not Set';
 
         // Channel IDs
@@ -1857,7 +1857,7 @@ async function triggerIngestion() {
     }
 
     try {
-        statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Triggering ingestion...</span>';
+        statusEl.innerHTML = '<span style="color: var(--accent);">Triggering ingestion...</span>';
 
         const res = await fetch('/platform/admin/discord/ingest', {
             method: 'POST',
@@ -1867,13 +1867,13 @@ async function triggerIngestion() {
         const data = await res.json();
 
         if (res.ok) {
-            statusEl.innerHTML = `<span style="color: var(--success);">✅ ${data.message}</span>`;
+            statusEl.innerHTML = `<span style="color: var(--success);">${data.message}</span>`;
             loadDiscordSettings();
         } else {
-            statusEl.innerHTML = `<span style="color: var(--error);">❌ ${data.detail || 'Failed'}</span>`;
+            statusEl.innerHTML = `<span style="color: var(--error);">${data.detail || 'Failed'}</span>`;
         }
     } catch {
-        statusEl.innerHTML = '<span style="color: var(--error);">❌ Network error</span>';
+        statusEl.innerHTML = '<span style="color: var(--error);">Network error</span>';
     }
 }
 """
