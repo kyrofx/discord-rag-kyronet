@@ -1,18 +1,25 @@
 FROM python:3.10-slim-bullseye
 
-# Cache bust: 2025-12-31-v4
 WORKDIR /app
 
-# Install core dependencies first - let pip resolve pydantic version
+# Force cache invalidation - change this value to rebuild
+ARG CACHE_BUST=2025-12-31-v5
+RUN echo "Cache bust: $CACHE_BUST"
+
+# Install pydantic and pydantic-core first, explicitly
+RUN pip install --no-cache-dir pydantic-core==2.27.2 pydantic==2.10.4 && \
+    python -c "from pydantic import BaseModel; print('pydantic step 1 OK')"
+
+# Install other core dependencies
 RUN pip install --no-cache-dir \
-    "pydantic>=2.7.4,<3" \
     fastapi==0.115.6 \
     uvicorn==0.34.0 \
     python-multipart==0.0.20 \
     redis==5.2.1 \
     httpx==0.28.1 \
     motor==3.6.0 \
-    tqdm
+    tqdm && \
+    python -c "from pydantic import BaseModel; print('pydantic step 2 OK')"
 
 # Install langchain dependencies
 RUN pip install --no-cache-dir \
@@ -20,10 +27,8 @@ RUN pip install --no-cache-dir \
     langchain-community==0.3.13 \
     langchain-experimental==0.3.4 \
     langchain-redis==0.2.1 \
-    google-generativeai==0.8.4
-
-# Force reinstall pydantic to ensure it's properly installed
-RUN pip install --force-reinstall --no-cache-dir pydantic
+    google-generativeai==0.8.4 && \
+    python -c "from pydantic import BaseModel; print('pydantic step 3 OK')"
 
 # Copy application code
 COPY packages/utils/src/utils /app/utils
