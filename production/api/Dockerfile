@@ -18,7 +18,9 @@ RUN poetry build
 COPY api/ /app/api/
 WORKDIR /app/api
 RUN poetry config virtualenvs.in-project true && \
-    poetry install --no-interaction
+    poetry install --no-interaction && \
+    .venv/bin/pip install --force-reinstall pydantic pydantic-core && \
+    .venv/bin/python -c "from pydantic import BaseModel; print('pydantic OK')"
 
 # Run the API
 CMD ["poetry", "run", "python", "src/api/main.py"]
