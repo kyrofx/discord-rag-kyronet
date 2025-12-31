@@ -1,6 +1,6 @@
 FROM python:3.10-slim-bullseye
 
-# Cache bust: 2025-12-31-v2
+# Cache bust: 2025-12-31-v3
 WORKDIR /app
 
 # Install core dependencies first
@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir \
     langchain-core==0.3.28 \
     langchain-community==0.3.13 \
     langchain-experimental==0.3.4 \
-    langchain-redis==0.1.1 \
+    langchain-redis==0.2.1 \
     google-generativeai==0.8.4
 
 # Copy application code
