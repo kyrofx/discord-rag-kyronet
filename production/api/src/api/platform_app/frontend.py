@@ -11,7 +11,7 @@ import os
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from platform.auth import get_current_user, require_user, require_admin
+from platform_app.auth import get_current_user, require_user, require_admin
 
 router = APIRouter(tags=["platform-ui"])
 

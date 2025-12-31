@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from bson import ObjectId
 
-from platform.models import UserRole, UserStatus, MessageRole
+from platform_app.models import UserRole, UserStatus, MessageRole
 
 logger = logging.getLogger(__name__)
 

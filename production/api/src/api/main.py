@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     # Startup
     if PLATFORM_ENABLED:
-        from platform.database import setup_admin_user, get_database
+        from platform_app.database import setup_admin_user, get_database
         # Initialize database connection and setup admin
         await get_database()
         await setup_admin_user()
@@ -47,8 +47,8 @@ app.add_exception_handler(Exception, generic_exception_handler)
 # Include routers based on mode
 if PLATFORM_ENABLED:
     # Platform mode: Include platform routers
-    from platform.router import router as platform_api_router
-    from platform.frontend import router as platform_ui_router
+    from platform_app.router import router as platform_api_router
+    from platform_app.frontend import router as platform_ui_router
 
     app.include_router(platform_api_router)
     app.include_router(platform_ui_router)

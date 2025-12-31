@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from platform.database import (
+from platform_app.database import (
     get_user_by_id,
     get_session_by_token,
     verify_password,
@@ -17,7 +17,7 @@ from platform.database import (
     update_last_login,
     get_user_by_username,
 )
-from platform.models import UserRole, UserStatus
+from platform_app.models import UserRole, UserStatus
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Form, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-from platform.auth import (
+from platform_app.auth import (
     require_user,
     require_admin,
     get_current_user,
@@ -22,7 +22,7 @@ from platform.auth import (
     logout_user,
     user_to_response,
 )
-from platform.database import (
+from platform_app.database import (
     create_user,
     get_user_by_username,
     get_user_by_email,
@@ -49,7 +49,7 @@ from platform.database import (
     generate_conversation_title,
     verify_password,
 )
-from platform.models import (
+from platform_app.models import (
     UserCreate,
     UserLogin,
     UserResponse,
