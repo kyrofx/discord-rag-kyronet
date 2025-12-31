@@ -1,0 +1,124 @@
+# Railway.app Configuration for Discord RAG
+# This file defines all services needed to deploy the Discord RAG application
+
+# ===========================================
+# API Service - FastAPI backend
+# ===========================================
+[[services]]
+name = "api"
+source = "production/api"
+dockerfile = "production/api/Dockerfile"
+
+[services.build]
+buildCommand = ""
+watchPatterns = ["production/api/**", "production/packages/**"]
+
+[services.deploy]
+startCommand = "poetry run python src/api/main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[[services.ports]]
+port = 8000
+
+[services.env]
+GOOGLE_API_KEY = { required = true }
+REDIS_URL = { default = "${{Redis.REDIS_URL}}" }
+MONGODB_URL = { default = "${{MongoDB.MONGO_URL}}" }
+MONGODB_DB = { default = "discord_rag" }
+MONGODB_COLLECTION = { default = "messages" }
+DASHBOARD_USER = { default = "admin" }
+DASHBOARD_PASS = { required = true }
+API_KEY = { default = "" }
+ENABLE_PLATFORM = { default = "false" }
+PLATFORM_ADMIN_USER = { default = "admin" }
+PLATFORM_ADMIN_PASS = { default = "" }
+PLATFORM_ADMIN_EMAIL = { default = "admin@localhost" }
+PLATFORM_APP_NAME = { default = "Discord RAG Chat" }
+SECURE_COOKIES = { default = "false" }
+
+# ===========================================
+# Discord Bot Service
+# ===========================================
+[[services]]
+name = "bot"
+source = "bot"
+dockerfile = "bot/Dockerfile"
+
+[services.build]
+buildCommand = ""
+watchPatterns = ["bot/**"]
+
+[services.deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[services.env]
+DISCORD_BOT_TOKEN = { required = true }
+DISCORD_BOT_CLIENT_ID = { required = true }
+RAG_API_BASE_URL = { default = "${{api.RAILWAY_PUBLIC_DOMAIN}}" }
+
+# ===========================================
+# Scheduler Service - Automated ingestion
+# ===========================================
+[[services]]
+name = "scheduler"
+source = "scheduler"
+dockerfile = "scheduler/Dockerfile"
+
+[services.build]
+buildCommand = ""
+watchPatterns = ["scheduler/**"]
+
+[services.deploy]
+startCommand = "npm start"
+restartPolicyType = "always"
+
+[services.env]
+DISCORD_BOT_TOKEN = { required = true }
+DISCORD_CHANNEL_IDS = { required = true }
+MONGODB_URL = { default = "${{MongoDB.MONGO_URL}}" }
+MONGODB_DB = { default = "discord_rag" }
+MONGODB_COLLECTION = { default = "messages" }
+RAG_API_BASE_URL = { default = "${{api.RAILWAY_PUBLIC_DOMAIN}}" }
+API_KEY = { default = "" }
+SCHEDULE_CRON = { default = "0 3 * * *" }
+QUIET_PERIOD_MINUTES = { default = "15" }
+BACKOFF_MINUTES = { default = "10" }
+
+# ===========================================
+# MongoDB Database
+# ===========================================
+[[services]]
+name = "MongoDB"
+source = "mongo"
+
+[services.deploy]
+image = "mongo:8.0.4"
+
+[[services.ports]]
+port = 27017
+
+[services.volumes]
+mountPath = "/data/db"
+name = "mongo_data"
+
+# ===========================================
+# Redis - Vector store and caching
+# ===========================================
+[[services]]
+name = "Redis"
+source = "redis"
+
+[services.deploy]
+image = "redis/redis-stack:7.4.0-v1"
+
+[[services.ports]]
+port = 6379
+
+[services.volumes]
+mountPath = "/data"
+name = "redis_data"

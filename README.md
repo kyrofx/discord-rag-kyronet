@@ -145,3 +145,51 @@ Once you went through all the steps at least once, you can start the whole appli
 ```console
 $ docker-compose up -d
 ```
+
+## Deployment to Railway
+
+This project includes Railway configuration files for easy deployment to [Railway.app](https://railway.app/).
+
+### Files Available:
+- `railway.toml` - TOML format configuration
+- `railway.json` - JSON format configuration
+
+### Quick Deploy:
+
+1. Install the [Railway CLI](https://docs.railway.app/guides/cli):
+   ```console
+   npm i -g @railway/cli
+   ```
+
+2. Login to Railway:
+   ```console
+   railway login
+   ```
+
+3. Initialize the project:
+   ```console
+   railway init
+   ```
+
+4. Set required environment variables:
+   ```console
+   railway variables set GOOGLE_API_KEY=your_google_api_key
+   railway variables set DISCORD_BOT_TOKEN=your_discord_bot_token
+   railway variables set DISCORD_BOT_CLIENT_ID=your_discord_bot_client_id
+   railway variables set DISCORD_CHANNEL_IDS=channel_id_1,channel_id_2
+   railway variables set DASHBOARD_PASS=your_secure_password
+   ```
+
+5. Deploy all services:
+   ```console
+   railway up
+   ```
+
+### Services Deployed:
+- **API** - FastAPI backend with health check
+- **Bot** - Discord bot for interacting with the RAG
+- **Scheduler** - Automated message ingestion
+- **MongoDB** - Database with persistent storage
+- **Redis** - Vector store and caching
+
+The Railway configuration automatically handles service dependencies and networking between services.
