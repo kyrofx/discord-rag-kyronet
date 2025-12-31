@@ -1,12 +1,11 @@
 FROM python:3.10-slim-bullseye
 
-# Cache bust: 2025-12-31-v3
+# Cache bust: 2025-12-31-v4
 WORKDIR /app
 
-# Install core dependencies first
+# Install core dependencies first - let pip resolve pydantic version
 RUN pip install --no-cache-dir \
-    pydantic==2.10.4 \
-    pydantic-core==2.27.2 \
+    "pydantic>=2.7.4,<3" \
     fastapi==0.115.6 \
     uvicorn==0.34.0 \
     python-multipart==0.0.20 \
@@ -22,6 +21,9 @@ RUN pip install --no-cache-dir \
     langchain-experimental==0.3.4 \
     langchain-redis==0.2.1 \
     google-generativeai==0.8.4
+
+# Force reinstall pydantic to ensure it's properly installed
+RUN pip install --force-reinstall --no-cache-dir pydantic
 
 # Copy application code
 COPY packages/utils/src/utils /app/utils
