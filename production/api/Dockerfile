@@ -2,18 +2,23 @@ FROM python:3.10-slim-bullseye
 
 WORKDIR /app
 
-RUN pip install poetry && \
-    poetry config virtualenvs.create false
+# Install poetry
+RUN pip install --no-cache-dir poetry
 
-COPY packages/utils/ /app/packages/utils
-COPY api/ /app/api
+# Copy dependency files first for caching
+COPY packages/utils/pyproject.toml packages/utils/poetry.lock /app/packages/utils/
+COPY api/pyproject.toml api/poetry.lock /app/api/
 
+# Build utils package
+COPY packages/utils/ /app/packages/utils/
 WORKDIR /app/packages/utils
-RUN poetry install --no-interaction --no-root && \
-    poetry build
+RUN poetry build
 
+# Install API dependencies
+COPY api/ /app/api/
 WORKDIR /app/api
-RUN poetry install --no-interaction
+RUN poetry config virtualenvs.in-project true && \
+    poetry install --no-interaction
 
 # Run the API
-CMD ["python", "src/api/main.py"]
+CMD ["poetry", "run", "python", "src/api/main.py"]
