@@ -1,5 +1,6 @@
 FROM python:3.10-slim-bullseye
 
+# Cache bust: 2025-12-31-v2
 WORKDIR /app
 
 # Install core dependencies first
