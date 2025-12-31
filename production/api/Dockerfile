@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir \
     python-multipart==0.0.20 \
     redis==5.2.1 \
     httpx==0.28.1 \
-    motor==3.6.0
+    motor==3.6.0 \
+    tqdm
 
 # Install langchain dependencies
 RUN pip install --no-cache-dir \
@@ -24,6 +25,9 @@ RUN pip install --no-cache-dir \
 # Copy application code
 COPY packages/utils/src/utils /app/utils
 COPY api/src/api /app/api
+
+# Set Python path to include utils
+ENV PYTHONPATH=/app
 
 WORKDIR /app/api
 
