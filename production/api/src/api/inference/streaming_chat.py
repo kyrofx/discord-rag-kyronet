@@ -321,19 +321,37 @@ When you have enough context, provide your final answer with source citations.""
                 yield create_sse_event("content", {"text": chunk})
 
             # Extract which source numbers the AI actually referenced
-            # Match various formats: [Source 1], (Source 1), Source 1, [1], (1, 2, 3)
+            # Match various formats including comma-separated: [Source 1, 2, 3], (Source 1), Source 1, [1], etc.
             import re
-            # Find all numbers that appear to be source references
-            patterns = [
-                r'\[Source (\d+)\]',      # [Source 1]
-                r'\(Source (\d+)',         # (Source 1 or (Source 1, 2)
-                r'Source (\d+)',           # Source 1
-                r'\[(\d+)\]',              # [1]
-                r'\((\d+)(?:,|\))',        # (1) or (1, 2)
-            ]
             referenced_nums = set()
-            for pattern in patterns:
-                referenced_nums.update(int(m) for m in re.findall(pattern, final_answer))
+
+            # First, find bracketed source references that may contain comma-separated numbers
+            # e.g., [Source 1, 2, 3] or [Source 6, 12, 19]
+            bracket_pattern = r'\[Source[s]?\s*([\d,\s]+)\]'
+            for match in re.finditer(bracket_pattern, final_answer, re.IGNORECASE):
+                nums_str = match.group(1)
+                referenced_nums.update(int(n.strip()) for n in re.findall(r'\d+', nums_str))
+
+            # Also match parenthesized source references: (Source 1, 2) or (Source 1)
+            paren_pattern = r'\(Source[s]?\s*([\d,\s]+)\)'
+            for match in re.finditer(paren_pattern, final_answer, re.IGNORECASE):
+                nums_str = match.group(1)
+                referenced_nums.update(int(n.strip()) for n in re.findall(r'\d+', nums_str))
+
+            # Match standalone "Source N" references
+            standalone_pattern = r'Source\s+(\d+)'
+            referenced_nums.update(int(m) for m in re.findall(standalone_pattern, final_answer, re.IGNORECASE))
+
+            # Match simple bracketed numbers like [1] or [1, 2, 3]
+            simple_bracket_pattern = r'\[([\d,\s]+)\]'
+            for match in re.finditer(simple_bracket_pattern, final_answer):
+                nums_str = match.group(1)
+                # Only count if it looks like source refs (not other bracketed numbers)
+                nums = [int(n.strip()) for n in re.findall(r'\d+', nums_str)]
+                # Assume it's a source ref if numbers are in our source range
+                for n in nums:
+                    if any(s[0] == n for s in all_sources):
+                        referenced_nums.add(n)
 
             # Build sources dict preserving original numbers, deduplicating by content
             seen_content = set()
