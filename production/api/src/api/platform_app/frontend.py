@@ -22,6 +22,8 @@ APP_NAME = os.getenv("PLATFORM_APP_NAME", "Discord RAG Chat")
 def render_page(title: str, content: str, include_chat_js: bool = False) -> str:
     """Render a full HTML page with common styles."""
     chat_js = CHAT_JS if include_chat_js else ""
+    # Include marked.js for markdown rendering in chat pages
+    marked_script = '<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>' if include_chat_js else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -29,6 +31,7 @@ def render_page(title: str, content: str, include_chat_js: bool = False) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - {APP_NAME}</title>
     <style>{BASE_STYLES}</style>
+    {marked_script}
 </head>
 <body>
     {content}
@@ -944,18 +947,103 @@ body {
 
 .message-content {
     line-height: 1.6;
-    white-space: pre-wrap;
 }
 
 .message-content p {
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.message-content p:last-child {
+    margin-bottom: 0;
 }
 
 .message-content code {
     background: var(--bg-tertiary);
     padding: 0.2rem 0.4rem;
     border-radius: 4px;
-    font-family: monospace;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 0.875em;
+}
+
+.message-content pre {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+}
+
+.message-content pre code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.message-content h1, .message-content h2, .message-content h3,
+.message-content h4, .message-content h5, .message-content h6 {
+    margin: 1.25rem 0 0.75rem;
+    font-weight: 600;
+}
+
+.message-content h1 { font-size: 1.5rem; }
+.message-content h2 { font-size: 1.3rem; }
+.message-content h3 { font-size: 1.15rem; }
+
+.message-content ul, .message-content ol {
+    margin: 0.75rem 0;
+    padding-left: 1.5rem;
+}
+
+.message-content li {
+    margin: 0.25rem 0;
+}
+
+.message-content blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 1rem;
+    margin: 1rem 0;
+    color: var(--text-secondary);
+}
+
+.message-content a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.message-content a:hover {
+    text-decoration: underline;
+}
+
+.message-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.5rem 0;
+}
+
+.message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+}
+
+.message-content th, .message-content td {
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    text-align: left;
+}
+
+.message-content th {
+    background: var(--bg-secondary);
+}
+
+.message-content strong {
+    font-weight: 600;
+}
+
+.message-content em {
+    font-style: italic;
 }
 
 .message-sources {
@@ -1398,6 +1486,19 @@ CHAT_JS = """
 <script>
 let currentConversationId = INITIAL_CONVERSATION_ID;
 let isStreaming = false;
+let streamingContent = '';
+
+// Configure marked for safe rendering
+marked.setOptions({
+    breaks: true,
+    gfm: true
+});
+
+// Render markdown safely
+function renderMarkdown(text) {
+    if (!text) return '';
+    return marked.parse(text);
+}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -1438,6 +1539,7 @@ function handleKeyDown(e) {
 
 async function sendMessage(message) {
     isStreaming = true;
+    streamingContent = '';
     const sendBtn = document.getElementById('sendBtn');
     sendBtn.disabled = true;
 
@@ -1454,7 +1556,7 @@ async function sendMessage(message) {
     thinkingContent.innerHTML = '';
 
     // Create assistant message placeholder
-    const assistantMsg = addMessage('assistant', '');
+    const assistantMsg = addMessage('assistant', '', true);
     const contentEl = assistantMsg.querySelector('.message-content');
 
     try {
@@ -1533,8 +1635,9 @@ function handleSSEEvent(data, contentEl, thinkingContent, sources) {
         thinkingContent.appendChild(item);
     }
     if (data.text) {
-        // Content chunk
-        contentEl.textContent += data.text;
+        // Content chunk - accumulate and render markdown
+        streamingContent += data.text;
+        contentEl.innerHTML = renderMarkdown(streamingContent);
         scrollToBottom();
     }
     if (data.sources) {
@@ -1548,15 +1651,26 @@ function handleSSEEvent(data, contentEl, thinkingContent, sources) {
     }
 }
 
-function addMessage(role, content) {
+function addMessage(role, content, isStreamPlaceholder = false) {
     const container = document.getElementById('messagesContainer');
     const msg = document.createElement('div');
     msg.className = 'message ' + role;
+
+    // For user messages, escape HTML. For assistant messages, render markdown.
+    let renderedContent;
+    if (isStreamPlaceholder) {
+        renderedContent = '';
+    } else if (role === 'user') {
+        renderedContent = escapeHtml(content);
+    } else {
+        renderedContent = renderMarkdown(content);
+    }
+
     msg.innerHTML = `
         <div class="message-header">
             ${role === 'user' ? 'You' : 'Assistant'}
         </div>
-        <div class="message-content">${escapeHtml(content)}</div>
+        <div class="message-content">${renderedContent}</div>
     `;
     container.appendChild(msg);
     scrollToBottom();
