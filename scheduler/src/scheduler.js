@@ -9,6 +9,7 @@ const MAX_FETCH_LIMIT = 100;
 const QUEUE_KEY = 'discord_rag:ingest_queue';
 const STATUS_KEY = 'discord_rag:bot:status';
 const HEARTBEAT_KEY = 'discord_rag:bot:heartbeat';
+const CHANNEL_IDS_KEY = 'discord_rag:settings:channel_ids';
 
 // Discord client for fetching messages
 const discordClient = new Client({
@@ -104,6 +105,27 @@ async function cacheGuildData() {
 }
 
 /**
+ * Get channel IDs from Redis (set via web UI) or fall back to env var
+ */
+async function getChannelIds() {
+    if (redisClient) {
+        try {
+            const channelIdsRedis = await redisClient.get(CHANNEL_IDS_KEY);
+            if (channelIdsRedis) {
+                const ids = channelIdsRedis.split(',').map(id => id.trim()).filter(Boolean);
+                if (ids.length > 0) {
+                    return ids;
+                }
+            }
+        } catch (err) {
+            console.error('[Scheduler] Failed to get channel IDs from Redis:', err.message);
+        }
+    }
+    // Fall back to env var
+    return config.channelIds;
+}
+
+/**
  * Check if there have been messages in the last N minutes
  */
 async function hasRecentActivity(quietPeriodMinutes) {
@@ -133,12 +155,14 @@ async function ingestMessages(channelIdFilter = null) {
 
     const channelIds = channelIdFilter
         ? [channelIdFilter]
-        : config.channelIds;
+        : await getChannelIds();
 
     if (channelIds.length === 0) {
-        console.log('[Scheduler] No channels configured for ingestion');
+        console.log('[Scheduler] No channels configured for ingestion. Set them via the admin UI or DISCORD_CHANNEL_IDS env var.');
         return 0;
     }
+
+    console.log(`[Scheduler] Ingesting from ${channelIds.length} channel(s): ${channelIds.join(', ')}`);
 
     try {
         await mongoClient.connect();
@@ -243,8 +267,9 @@ async function triggerIndexing() {
             : {};
 
         // Get guild IDs from the channels we monitor
+        const channelIds = await getChannelIds();
         const guildIds = new Set();
-        for (const channelId of config.channelIds) {
+        for (const channelId of channelIds) {
             try {
                 const channel = await discordClient.channels.fetch(channelId);
                 if (channel.guild) {
@@ -393,13 +418,20 @@ async function runScheduledJob(retriesRemaining = config.schedule.maxRetries) {
 // Initialize
 discordClient.once('ready', async () => {
     console.log(`[Scheduler] Discord client ready as ${discordClient.user.tag}`);
-    console.log(`[Scheduler] Monitoring channels: ${config.channelIds.join(', ')}`);
     console.log(`[Scheduler] Schedule: ${config.schedule.cronExpression}`);
     console.log(`[Scheduler] Quiet period: ${config.schedule.quietPeriodMinutes} minutes`);
     console.log(`[Scheduler] Backoff: ${config.schedule.backoffMinutes} minutes`);
 
     // Initialize Redis
     await initRedis();
+
+    // Log monitored channels (after Redis is connected so we can check Redis config)
+    const channelIds = await getChannelIds();
+    if (channelIds.length > 0) {
+        console.log(`[Scheduler] Monitoring ${channelIds.length} channel(s): ${channelIds.join(', ')}`);
+    } else {
+        console.log('[Scheduler] No channels configured yet. Set them via the admin UI or DISCORD_CHANNEL_IDS env var.');
+    }
 
     // Update status immediately
     await updateBotStatus();
