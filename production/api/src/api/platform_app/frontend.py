@@ -1627,12 +1627,23 @@ function handleSSEEvent(data, contentEl, thinkingContent, sources) {
         thinkingContent.appendChild(item);
         thinkingContent.scrollTop = thinkingContent.scrollHeight;
     }
-    if (data.tool) {
-        // Tool call
+    if (data.tool && data.args) {
+        // Tool call - format nicely based on tool type
         const item = document.createElement('div');
         item.className = 'thinking-item';
-        item.textContent = `Searching: "${data.query}"`;
+        let toolText = formatToolCall(data.tool, data.args);
+        item.textContent = toolText;
         thinkingContent.appendChild(item);
+        thinkingContent.scrollTop = thinkingContent.scrollHeight;
+    }
+    if (data.tool && data.results_count !== undefined) {
+        // Tool result
+        const item = document.createElement('div');
+        item.className = 'thinking-item';
+        item.textContent = `Found ${data.results_count} results`;
+        item.style.color = 'var(--text-secondary)';
+        thinkingContent.appendChild(item);
+        thinkingContent.scrollTop = thinkingContent.scrollHeight;
     }
     if (data.text) {
         // Content chunk - accumulate and render markdown
@@ -1648,6 +1659,29 @@ function handleSSEEvent(data, contentEl, thinkingContent, sources) {
         // Title update
         document.getElementById('chatTitle').textContent = data.title;
         loadConversations();
+    }
+}
+
+function formatToolCall(tool, args) {
+    switch (tool) {
+        case 'search_messages':
+            return `Searching: "${args.query}"`;
+        case 'search_by_user':
+            return `Searching ${args.username}'s messages: "${args.query}"`;
+        case 'search_by_date_range':
+            return `Searching ${args.start_date} to ${args.end_date || 'now'}: "${args.query}"`;
+        case 'get_surrounding_messages':
+            return `Getting conversation context...`;
+        case 'get_user_activity':
+            return `Analyzing ${args.username}'s activity...`;
+        case 'count_mentions':
+            return `Counting mentions of "${args.term}"...`;
+        case 'get_recent_messages':
+            return `Getting ${args.num_results || 20} recent messages...`;
+        case 'evaluate_answer':
+            return `Self-evaluating (confidence: ${args.confidence})...`;
+        default:
+            return `Using ${tool}...`;
     }
 }
 
