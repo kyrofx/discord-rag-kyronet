@@ -149,12 +149,14 @@ async def logout_user(token: str) -> bool:
 
 def user_to_response(user: dict) -> dict:
     """Convert a user document to a response dict."""
+    created_at = user["created_at"]
+    last_login = user.get("last_login")
     return {
         "id": str(user["_id"]),
         "username": user["username"],
         "email": user["email"],
         "role": user["role"],
         "status": user["status"],
-        "created_at": user["created_at"],
-        "last_login": user.get("last_login"),
+        "created_at": created_at.isoformat() if created_at else None,
+        "last_login": last_login.isoformat() if last_login else None,
     }
