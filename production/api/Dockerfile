@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir \
     langchain-community==0.3.13 \
     langchain-experimental==0.3.4 \
     langchain-redis==0.2.1 \
+    langgraph==0.2.60 \
     google-generativeai==0.8.4 && \
     python -c "from pydantic import BaseModel; print('pydantic step 3 OK')"
 

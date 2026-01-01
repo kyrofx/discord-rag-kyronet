@@ -981,8 +981,15 @@ async def admin_get_indexed_guilds(admin: dict = Depends(require_admin)):
     for key in guild_keys:
         guild_id = key.split(":")[2]
         stats = r.hgetall(key)
+
+        # Try to get guild metadata if available
+        guild_meta = r.hgetall(f"discord_rag:guild:{guild_id}:meta")
+
         guilds.append({
             "guild_id": guild_id,
+            "guild_name": guild_meta.get("name", "Unknown"),
+            "guild_icon": guild_meta.get("icon"),
+            "member_count": int(guild_meta.get("member_count", 0)),
             "total_messages": int(stats.get("total_messages", 0)),
             "indexed_channels": int(stats.get("indexed_channels", 0)),
             "oldest_message": stats.get("oldest_message"),
@@ -991,3 +998,223 @@ async def admin_get_indexed_guilds(admin: dict = Depends(require_admin)):
         })
 
     return {"guilds": guilds}
+
+
+# ============== Discord Bot Invite & Permissions ==============
+
+# Discord OAuth2 permission flags
+DISCORD_PERMISSIONS = {
+    # General permissions
+    "VIEW_CHANNEL": {"value": 0x400, "description": "View channels", "category": "General"},
+    "SEND_MESSAGES": {"value": 0x800, "description": "Send messages", "category": "Text"},
+    "SEND_MESSAGES_IN_THREADS": {"value": 0x4000000000, "description": "Send messages in threads", "category": "Text"},
+    "EMBED_LINKS": {"value": 0x4000, "description": "Embed links", "category": "Text"},
+    "ATTACH_FILES": {"value": 0x8000, "description": "Attach files", "category": "Text"},
+    "READ_MESSAGE_HISTORY": {"value": 0x10000, "description": "Read message history", "category": "Text"},
+    "USE_EXTERNAL_EMOJIS": {"value": 0x40000, "description": "Use external emojis", "category": "Text"},
+    "ADD_REACTIONS": {"value": 0x40, "description": "Add reactions", "category": "Text"},
+    "USE_APPLICATION_COMMANDS": {"value": 0x80000000, "description": "Use application commands", "category": "General"},
+    "MANAGE_MESSAGES": {"value": 0x2000, "description": "Manage messages", "category": "Text"},
+    "MANAGE_THREADS": {"value": 0x400000000, "description": "Manage threads", "category": "Text"},
+    "CREATE_PUBLIC_THREADS": {"value": 0x800000000, "description": "Create public threads", "category": "Text"},
+    "CREATE_PRIVATE_THREADS": {"value": 0x1000000000, "description": "Create private threads", "category": "Text"},
+}
+
+# Preset permission combinations
+PERMISSION_PRESETS = {
+    "minimal": {
+        "name": "Minimal (Read Only)",
+        "description": "Basic read access for indexing messages",
+        "permissions": ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY"]
+    },
+    "standard": {
+        "name": "Standard (Recommended)",
+        "description": "Read messages and respond to slash commands",
+        "permissions": [
+            "VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "SEND_MESSAGES",
+            "EMBED_LINKS", "USE_APPLICATION_COMMANDS", "ADD_REACTIONS"
+        ]
+    },
+    "full": {
+        "name": "Full Features",
+        "description": "All features including thread support",
+        "permissions": [
+            "VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "SEND_MESSAGES",
+            "SEND_MESSAGES_IN_THREADS", "EMBED_LINKS", "ATTACH_FILES",
+            "USE_EXTERNAL_EMOJIS", "ADD_REACTIONS", "USE_APPLICATION_COMMANDS",
+            "CREATE_PUBLIC_THREADS"
+        ]
+    }
+}
+
+
+def calculate_permissions(permission_names: List[str]) -> int:
+    """Calculate the combined permission integer from permission names."""
+    total = 0
+    for name in permission_names:
+        if name in DISCORD_PERMISSIONS:
+            total |= DISCORD_PERMISSIONS[name]["value"]
+    return total
+
+
+@router.get("/admin/discord/invite")
+async def admin_get_invite_info(admin: dict = Depends(require_admin)):
+    """Get Discord bot invite link generation info (admin only)."""
+    client_id = os.getenv("DISCORD_BOT_CLIENT_ID", "")
+
+    if not client_id:
+        return {
+            "configured": False,
+            "error": "DISCORD_BOT_CLIENT_ID not set",
+            "permissions": DISCORD_PERMISSIONS,
+            "presets": PERMISSION_PRESETS
+        }
+
+    return {
+        "configured": True,
+        "client_id": client_id,
+        "permissions": DISCORD_PERMISSIONS,
+        "presets": PERMISSION_PRESETS
+    }
+
+
+@router.post("/admin/discord/invite/generate")
+async def admin_generate_invite_link(
+    preset: Optional[str] = Form(None, description="Permission preset: minimal, standard, or full"),
+    permissions: Optional[str] = Form(None, description="Comma-separated permission names"),
+    admin: dict = Depends(require_admin)
+):
+    """Generate a Discord bot invite link with specified permissions (admin only)."""
+    client_id = os.getenv("DISCORD_BOT_CLIENT_ID", "")
+
+    if not client_id:
+        raise HTTPException(status_code=400, detail="DISCORD_BOT_CLIENT_ID not configured")
+
+    # Determine which permissions to use
+    if preset and preset in PERMISSION_PRESETS:
+        perm_names = PERMISSION_PRESETS[preset]["permissions"]
+    elif permissions:
+        perm_names = [p.strip().upper() for p in permissions.split(",") if p.strip()]
+    else:
+        # Default to standard preset
+        perm_names = PERMISSION_PRESETS["standard"]["permissions"]
+
+    # Validate permissions
+    invalid = [p for p in perm_names if p not in DISCORD_PERMISSIONS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid permissions: {', '.join(invalid)}")
+
+    # Calculate permission integer
+    perm_value = calculate_permissions(perm_names)
+
+    # Generate invite URL
+    # Using the applications.commands scope for slash commands
+    scopes = "bot%20applications.commands"
+    invite_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&permissions={perm_value}&scope={scopes}"
+
+    return {
+        "invite_url": invite_url,
+        "client_id": client_id,
+        "permissions_value": perm_value,
+        "permissions_used": perm_names,
+        "preset": preset
+    }
+
+
+@router.get("/admin/discord/status")
+async def admin_get_bot_status(admin: dict = Depends(require_admin)):
+    """Get Discord bot connection status (admin only)."""
+    r = get_redis()
+
+    # Check for bot status in Redis (set by the bot itself)
+    bot_status = r.hgetall("discord_rag:bot:status")
+
+    # Get last heartbeat
+    last_heartbeat = r.get("discord_rag:bot:heartbeat")
+
+    # Determine if bot is online (heartbeat within last 60 seconds)
+    is_online = False
+    if last_heartbeat:
+        try:
+            from datetime import datetime
+            hb_time = datetime.fromisoformat(last_heartbeat)
+            delta = (datetime.utcnow() - hb_time).total_seconds()
+            is_online = delta < 60
+        except:
+            pass
+
+    return {
+        "online": is_online,
+        "last_heartbeat": last_heartbeat,
+        "status": bot_status.get("status", "unknown"),
+        "guilds_connected": int(bot_status.get("guild_count", 0)),
+        "uptime_seconds": int(bot_status.get("uptime_seconds", 0)),
+        "started_at": bot_status.get("started_at"),
+        "username": bot_status.get("username"),
+        "discriminator": bot_status.get("discriminator"),
+        "avatar_url": bot_status.get("avatar_url"),
+    }
+
+
+@router.get("/admin/discord/channels/{guild_id}")
+async def admin_get_guild_channels(
+    guild_id: str,
+    admin: dict = Depends(require_admin)
+):
+    """Get available channels for a guild (admin only).
+
+    Note: This requires the bot to have cached channel info in Redis.
+    """
+    r = get_redis()
+
+    # Get cached channel list for this guild
+    channels_key = f"discord_rag:guild:{guild_id}:channels"
+    channels_data = r.get(channels_key)
+
+    if not channels_data:
+        return {
+            "guild_id": guild_id,
+            "channels": [],
+            "cached": False,
+            "message": "Channel data not cached. The bot needs to sync guild data."
+        }
+
+    try:
+        channels = json.loads(channels_data)
+        return {
+            "guild_id": guild_id,
+            "channels": channels,
+            "cached": True
+        }
+    except:
+        return {
+            "guild_id": guild_id,
+            "channels": [],
+            "cached": False,
+            "error": "Failed to parse cached channel data"
+        }
+
+
+@router.post("/admin/discord/sync-guild/{guild_id}")
+async def admin_request_guild_sync(
+    guild_id: str,
+    admin: dict = Depends(require_admin)
+):
+    """Request the bot to sync guild data (channels, members, etc.) (admin only)."""
+    r = get_redis()
+
+    # Queue a sync request for the bot
+    sync_request = json.dumps({
+        "type": "sync_guild",
+        "guild_id": guild_id,
+        "requested_by": admin.get("username", "admin"),
+        "requested_at": datetime.utcnow().isoformat()
+    })
+
+    r.lpush("discord_rag:bot:commands", sync_request)
+
+    return {
+        "status": "queued",
+        "message": f"Sync request queued for guild {guild_id}",
+        "guild_id": guild_id
+    }

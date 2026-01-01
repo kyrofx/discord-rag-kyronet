@@ -383,7 +383,25 @@ async def admin_page(request: Request):
                     <h3>Bot Status</h3>
                     <div class="stats-grid">
                         <div class="stat-card">
-                            <div class="stat-label">Bot Token</div>
+                            <div class="stat-label">Status</div>
+                            <div class="stat-value" id="discordBotOnline">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Bot User</div>
+                            <div class="stat-value" id="discordBotUsername" style="font-size: 0.9rem;">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Connected Guilds</div>
+                            <div class="stat-value" id="discordGuildCount">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Uptime</div>
+                            <div class="stat-value" id="discordUptime">-</div>
+                        </div>
+                    </div>
+                    <div class="stats-grid" style="margin-top: 0.5rem;">
+                        <div class="stat-card">
+                            <div class="stat-label">Token Configured</div>
                             <div class="stat-value" id="discordBotStatus">-</div>
                         </div>
                         <div class="stat-card">
@@ -391,6 +409,26 @@ async def admin_page(request: Request):
                             <div class="stat-value" id="discordClientId" style="font-size: 0.75rem;">-</div>
                         </div>
                     </div>
+                </div>
+
+                <div class="settings-group">
+                    <h3>Bot Invite Link</h3>
+                    <p style="margin-bottom: 1rem; color: var(--text-secondary);">Generate an invite link to add the bot to your Discord server.</p>
+                    <div class="form-group">
+                        <label for="invitePreset">Permission Preset</label>
+                        <select id="invitePreset" style="width: 100%;">
+                            <option value="minimal">Minimal (Read Only) - Basic indexing</option>
+                            <option value="standard" selected>Standard (Recommended) - Commands & responses</option>
+                            <option value="full">Full Features - Including threads</option>
+                            <option value="custom">Custom Permissions</option>
+                        </select>
+                    </div>
+                    <div id="customPermissions" style="display: none; margin-bottom: 1rem;">
+                        <label style="margin-bottom: 0.5rem; display: block;">Select Permissions:</label>
+                        <div id="permissionCheckboxes" class="permission-grid"></div>
+                    </div>
+                    <button class="btn btn-primary" onclick="generateInviteLink()">Generate Invite Link</button>
+                    <div id="inviteLinkResult" style="margin-top: 1rem;"></div>
                 </div>
 
                 <div class="settings-group">
@@ -436,15 +474,17 @@ async def admin_page(request: Request):
                 </div>
 
                 <div class="settings-group">
-                    <h3>Indexed Guilds</h3>
+                    <h3>Connected Servers</h3>
                     <div class="table-container">
                         <table class="admin-table">
                             <thead>
                                 <tr>
-                                    <th>Guild ID</th>
+                                    <th>Server</th>
+                                    <th>Members</th>
                                     <th>Messages</th>
                                     <th>Channels</th>
                                     <th>Last Indexed</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="guildsTableBody">
@@ -453,6 +493,20 @@ async def admin_page(request: Request):
                     </div>
                 </div>
             </section>
+
+            <!-- Guild Channels Modal -->
+            <div class="modal" id="guildChannelsModal">
+                <div class="modal-content" style="max-width: 600px;">
+                    <h3>Guild Channels - <span id="guildChannelsTitle">Loading...</span></h3>
+                    <div id="guildChannelsList" style="max-height: 400px; overflow-y: auto;">
+                        <p>Loading channels...</p>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" onclick="hideGuildChannelsModal()">Close</button>
+                        <button type="button" class="btn btn-primary" onclick="addSelectedChannels()">Add Selected to Monitored</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- Settings Section -->
             <section id="settings-section" class="admin-section">
@@ -1223,6 +1277,103 @@ body {
     margin-top: 1rem;
 }
 
+.permission-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.5rem;
+    background: var(--bg-tertiary);
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.permission-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.permission-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+.invite-link-box {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.invite-link-box input {
+    width: 100%;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.75rem;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.invite-link-box .btn-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.channel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.channel-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+}
+
+.channel-item.category {
+    background: transparent;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+    padding-left: 0;
+}
+
+.channel-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+.channel-icon {
+    color: var(--text-secondary);
+}
+
+.status-online {
+    color: #43b581;
+}
+
+.status-offline {
+    color: var(--text-secondary);
+}
+
+.guild-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
     width: 6px;
@@ -1764,18 +1915,53 @@ function editUser(id) {
 
 // ============== Discord Management ==============
 
+let discordPermissions = {};
+
 async function loadDiscordSettings() {
     try {
-        const [discordRes, guildsRes] = await Promise.all([
+        const [discordRes, guildsRes, statusRes, inviteRes] = await Promise.all([
             fetch('/platform/admin/discord'),
-            fetch('/platform/admin/discord/guilds')
+            fetch('/platform/admin/discord/guilds'),
+            fetch('/platform/admin/discord/status'),
+            fetch('/platform/admin/discord/invite')
         ]);
 
         const discord = await discordRes.json();
         const guildsData = await guildsRes.json();
+        const status = await statusRes.json();
+        const invite = await inviteRes.json();
 
-        // Bot status
-        document.getElementById('discordBotStatus').textContent = discord.bot_token_set ? 'Configured' : 'Not Set';
+        // Bot online status
+        const onlineEl = document.getElementById('discordBotOnline');
+        if (status.online) {
+            onlineEl.innerHTML = '<span class="status-online">Online</span>';
+        } else {
+            onlineEl.innerHTML = '<span class="status-offline">Offline</span>';
+        }
+
+        // Bot username
+        const usernameEl = document.getElementById('discordBotUsername');
+        if (status.username) {
+            usernameEl.textContent = status.username;
+        } else {
+            usernameEl.textContent = 'Not connected';
+        }
+
+        // Guild count
+        document.getElementById('discordGuildCount').textContent = status.guilds_connected || '0';
+
+        // Uptime
+        const uptimeEl = document.getElementById('discordUptime');
+        if (status.uptime_seconds > 0) {
+            const hours = Math.floor(status.uptime_seconds / 3600);
+            const mins = Math.floor((status.uptime_seconds % 3600) / 60);
+            uptimeEl.textContent = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        } else {
+            uptimeEl.textContent = '-';
+        }
+
+        // Token & Client ID
+        document.getElementById('discordBotStatus').textContent = discord.bot_token_set ? 'Yes' : 'No';
         document.getElementById('discordClientId').textContent = discord.bot_client_id || 'Not Set';
 
         // Channel IDs
@@ -1787,19 +1973,176 @@ async function loadDiscordSettings() {
         document.getElementById('quietPeriod').value = discord.quiet_period_minutes;
         document.getElementById('backoffMinutes').value = discord.backoff_minutes;
 
-        // Guilds table
-        document.getElementById('guildsTableBody').innerHTML = guildsData.guilds.map(g => `
+        // Store permissions for invite link generation
+        if (invite.permissions) {
+            discordPermissions = invite.permissions;
+            setupPermissionCheckboxes();
+        }
+
+        // Guilds table with improved display
+        document.getElementById('guildsTableBody').innerHTML = guildsData.guilds.map(g => {
+            const iconHtml = g.guild_icon
+                ? `<img src="${g.guild_icon}" class="guild-icon" alt="">`
+                : `<div class="guild-icon">${(g.guild_name || 'U')[0].toUpperCase()}</div>`;
+            return `
             <tr>
-                <td><code>${g.guild_id}</code></td>
+                <td style="display: flex; align-items: center; gap: 0.5rem;">
+                    ${iconHtml}
+                    <div>
+                        <div>${g.guild_name || 'Unknown'}</div>
+                        <small style="color: var(--text-secondary);">${g.guild_id}</small>
+                    </div>
+                </td>
+                <td>${g.member_count || '-'}</td>
                 <td>${g.total_messages}</td>
                 <td>${g.indexed_channels}</td>
                 <td>${g.last_indexed ? new Date(g.last_indexed).toLocaleString() : 'Never'}</td>
+                <td>
+                    <button class="btn" onclick="showGuildChannels('${g.guild_id}', '${g.guild_name || 'Unknown'}')">Channels</button>
+                </td>
             </tr>
-        `).join('') || '<tr><td colspan="4">No guilds indexed yet</td></tr>';
+        `}).join('') || '<tr><td colspan="6">No guilds indexed yet</td></tr>';
 
     } catch (err) {
         console.error('Failed to load Discord settings:', err);
     }
+}
+
+function setupPermissionCheckboxes() {
+    const container = document.getElementById('permissionCheckboxes');
+    container.innerHTML = Object.entries(discordPermissions).map(([key, perm]) => `
+        <label class="permission-item">
+            <input type="checkbox" name="perm" value="${key}">
+            ${perm.description}
+        </label>
+    `).join('');
+
+    // Show/hide custom permissions based on preset selection
+    document.getElementById('invitePreset').addEventListener('change', (e) => {
+        const customDiv = document.getElementById('customPermissions');
+        customDiv.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    });
+}
+
+async function generateInviteLink() {
+    const preset = document.getElementById('invitePreset').value;
+    const resultEl = document.getElementById('inviteLinkResult');
+
+    const formData = new URLSearchParams();
+
+    if (preset === 'custom') {
+        const checked = Array.from(document.querySelectorAll('#permissionCheckboxes input:checked'))
+            .map(cb => cb.value);
+        if (checked.length === 0) {
+            resultEl.innerHTML = '<span style="color: var(--error);">Please select at least one permission</span>';
+            return;
+        }
+        formData.append('permissions', checked.join(','));
+    } else {
+        formData.append('preset', preset);
+    }
+
+    try {
+        const res = await fetch('/platform/admin/discord/invite/generate', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            resultEl.innerHTML = `
+                <div class="invite-link-box">
+                    <input type="text" id="inviteLinkInput" value="${data.invite_url}" readonly>
+                    <div class="btn-row">
+                        <button class="btn btn-primary" onclick="copyInviteLink()">Copy Link</button>
+                        <a href="${data.invite_url}" target="_blank" class="btn">Open in Discord</a>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+                        Permissions: ${data.permissions_used.join(', ')}
+                    </p>
+                </div>
+            `;
+        } else {
+            const err = await res.json();
+            resultEl.innerHTML = `<span style="color: var(--error);">${err.detail || 'Failed to generate link'}</span>`;
+        }
+    } catch {
+        resultEl.innerHTML = '<span style="color: var(--error);">Network error</span>';
+    }
+}
+
+function copyInviteLink() {
+    const input = document.getElementById('inviteLinkInput');
+    input.select();
+    document.execCommand('copy');
+    alert('Invite link copied to clipboard!');
+}
+
+async function showGuildChannels(guildId, guildName) {
+    document.getElementById('guildChannelsTitle').textContent = guildName;
+    document.getElementById('guildChannelsList').innerHTML = '<p>Loading channels...</p>';
+    document.getElementById('guildChannelsModal').classList.add('active');
+
+    try {
+        const res = await fetch(`/platform/admin/discord/channels/${guildId}`);
+        const data = await res.json();
+
+        if (!data.cached || data.channels.length === 0) {
+            document.getElementById('guildChannelsList').innerHTML = `
+                <p style="color: var(--text-secondary);">${data.message || 'No channel data available.'}</p>
+                <button class="btn btn-primary" onclick="requestGuildSync('${guildId}')">Request Sync</button>
+            `;
+            return;
+        }
+
+        const channelHtml = data.channels.map(ch => `
+            <div class="channel-item">
+                <input type="checkbox" value="${ch.id}" data-name="${ch.name}">
+                <span class="channel-icon">#</span>
+                <span>${ch.name}</span>
+            </div>
+        `).join('');
+
+        document.getElementById('guildChannelsList').innerHTML = `<div class="channel-list">${channelHtml}</div>`;
+    } catch {
+        document.getElementById('guildChannelsList').innerHTML = '<p style="color: var(--error);">Failed to load channels</p>';
+    }
+}
+
+function hideGuildChannelsModal() {
+    document.getElementById('guildChannelsModal').classList.remove('active');
+}
+
+async function requestGuildSync(guildId) {
+    try {
+        const res = await fetch(`/platform/admin/discord/sync-guild/${guildId}`, {method: 'POST'});
+        const data = await res.json();
+        alert(data.message || 'Sync requested');
+    } catch {
+        alert('Failed to request sync');
+    }
+}
+
+function addSelectedChannels() {
+    const selected = Array.from(document.querySelectorAll('#guildChannelsList input:checked'))
+        .map(cb => cb.value);
+
+    if (selected.length === 0) {
+        alert('No channels selected');
+        return;
+    }
+
+    // Add to existing channel IDs
+    const currentIds = document.getElementById('discordChannelIds').value
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s);
+
+    const newIds = [...new Set([...currentIds, ...selected])];
+    document.getElementById('discordChannelIds').value = newIds.join(', ');
+
+    hideGuildChannelsModal();
+    alert(`Added ${selected.length} channel(s). Click "Save Channels" to apply.`);
 }
 
 async function saveDiscordChannels() {
