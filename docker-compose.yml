@@ -85,6 +85,7 @@ services:
       - MONGODB_URL=${MONGODB_URL:-mongodb://discord_rag_mongo:27017}
       - MONGODB_DB=${MONGODB_DB}
       - MONGODB_COLLECTION=${MONGODB_COLLECTION}
+      - REDIS_URL=${REDIS_URL:-redis://discord_rag_redis:6379}
       - RAG_API_BASE_URL=${RAG_API_BASE_URL:-http://discord_rag_api:8000}
       - API_KEY=${API_KEY:-}
       # Schedule: 3 AM daily (default)
@@ -97,6 +98,7 @@ services:
       - discord_rag_network
     depends_on:
       - mongo
+      - redis
       - api
     restart: unless-stopped
 

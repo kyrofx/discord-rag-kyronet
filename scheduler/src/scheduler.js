@@ -1,10 +1,14 @@
 const cron = require('node-cron');
 const { MongoClient } = require('mongodb');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const { createClient } = require('redis');
 const axios = require('axios');
 const config = require('./config.js');
 
 const MAX_FETCH_LIMIT = 100;
+const QUEUE_KEY = 'discord_rag:ingest_queue';
+const STATUS_KEY = 'discord_rag:bot:status';
+const HEARTBEAT_KEY = 'discord_rag:bot:heartbeat';
 
 // Discord client for fetching messages
 const discordClient = new Client({
@@ -17,6 +21,87 @@ const discordClient = new Client({
 
 // MongoDB client
 const mongoClient = new MongoClient(config.mongodb.url);
+
+// Redis client
+let redisClient = null;
+const startTime = Date.now();
+
+/**
+ * Initialize Redis connection
+ */
+async function initRedis() {
+    try {
+        redisClient = createClient({ url: config.redisUrl });
+        redisClient.on('error', (err) => console.error('[Scheduler] Redis error:', err.message));
+        await redisClient.connect();
+        console.log('[Scheduler] Redis connected');
+        return true;
+    } catch (err) {
+        console.error('[Scheduler] Redis connection failed:', err.message);
+        return false;
+    }
+}
+
+/**
+ * Update bot status in Redis
+ */
+async function updateBotStatus() {
+    if (!redisClient) return;
+
+    try {
+        const uptime = Math.floor((Date.now() - startTime) / 1000);
+
+        await redisClient.hSet(STATUS_KEY, {
+            status: 'online',
+            guild_count: String(discordClient.guilds.cache.size),
+            uptime_seconds: String(uptime),
+            started_at: new Date(startTime).toISOString(),
+            username: discordClient.user?.username || '',
+            discriminator: discordClient.user?.discriminator || '',
+            avatar_url: discordClient.user?.displayAvatarURL() || ''
+        });
+
+        await redisClient.set(HEARTBEAT_KEY, new Date().toISOString());
+    } catch (err) {
+        console.error('[Scheduler] Failed to update status:', err.message);
+    }
+}
+
+/**
+ * Cache guild metadata and channels in Redis
+ */
+async function cacheGuildData() {
+    if (!redisClient) return;
+
+    try {
+        for (const [guildId, guild] of discordClient.guilds.cache) {
+            // Cache guild metadata
+            await redisClient.hSet(`discord_rag:guild:${guildId}:meta`, {
+                name: guild.name,
+                icon: guild.iconURL() || '',
+                member_count: String(guild.memberCount)
+            });
+
+            // Cache text channels
+            const textChannels = guild.channels.cache
+                .filter(ch => ch.type === ChannelType.GuildText)
+                .map(ch => ({
+                    id: ch.id,
+                    name: ch.name,
+                    type: 'text',
+                    category: ch.parent?.name || null
+                }));
+
+            await redisClient.set(
+                `discord_rag:guild:${guildId}:channels`,
+                JSON.stringify(textChannels)
+            );
+        }
+        console.log(`[Scheduler] Cached data for ${discordClient.guilds.cache.size} guilds`);
+    } catch (err) {
+        console.error('[Scheduler] Failed to cache guild data:', err.message);
+    }
+}
 
 /**
  * Check if there have been messages in the last N minutes
@@ -43,8 +128,17 @@ async function hasRecentActivity(quietPeriodMinutes) {
 /**
  * Fetch and store new messages from Discord
  */
-async function ingestMessages() {
+async function ingestMessages(channelIdFilter = null) {
     console.log('[Scheduler] Starting message ingestion...');
+
+    const channelIds = channelIdFilter
+        ? [channelIdFilter]
+        : config.channelIds;
+
+    if (channelIds.length === 0) {
+        console.log('[Scheduler] No channels configured for ingestion');
+        return 0;
+    }
 
     try {
         await mongoClient.connect();
@@ -53,7 +147,7 @@ async function ingestMessages() {
 
         let totalProcessed = 0;
 
-        for (const channelId of config.channelIds) {
+        for (const channelId of channelIds) {
             try {
                 const channel = await discordClient.channels.fetch(channelId);
                 let latestStoredMessageId = await getLatestStoredMessageId(collection, channelId);
@@ -103,6 +197,19 @@ async function ingestMessages() {
 
                 console.log(`[Scheduler] Channel ${channelId}: ${messagesProcessed} new messages`);
                 totalProcessed += messagesProcessed;
+
+                // Update guild stats in Redis
+                if (redisClient && channel.guild) {
+                    const guildStatsKey = `discord_rag:guild:${channel.guild.id}:stats`;
+                    const currentStats = await redisClient.hGetAll(guildStatsKey);
+                    const totalMessages = parseInt(currentStats.total_messages || '0') + messagesProcessed;
+
+                    await redisClient.hSet(guildStatsKey, {
+                        total_messages: String(totalMessages),
+                        last_indexed: new Date().toISOString(),
+                        newest_message: new Date().toISOString()
+                    });
+                }
             } catch (err) {
                 console.error(`[Scheduler] Error ingesting channel ${channelId}:`, err.message);
             }
@@ -169,6 +276,82 @@ async function triggerIndexing() {
 }
 
 /**
+ * Process manual trigger from Redis queue
+ */
+async function processManualTrigger(jobData) {
+    console.log(`[Scheduler] Processing manual trigger from ${jobData.triggered_by || 'admin'}`);
+
+    const jobId = jobData.job_id;
+    const channelId = jobData.channel_id || null;
+
+    // Update job status
+    if (redisClient && jobId) {
+        await redisClient.hSet(`discord_rag:job:${jobId}`, {
+            status: 'running',
+            started_at: new Date().toISOString(),
+            triggered_by: jobData.triggered_by || 'admin'
+        });
+    }
+
+    try {
+        const messagesIngested = await ingestMessages(channelId);
+
+        if (messagesIngested > 0) {
+            await triggerIndexing();
+        }
+
+        // Update job status
+        if (redisClient && jobId) {
+            await redisClient.hSet(`discord_rag:job:${jobId}`, {
+                status: 'completed',
+                completed_at: new Date().toISOString(),
+                messages_ingested: String(messagesIngested)
+            });
+        }
+
+        console.log(`[Scheduler] Manual trigger complete. ${messagesIngested} messages ingested.`);
+    } catch (err) {
+        console.error('[Scheduler] Manual trigger failed:', err.message);
+
+        if (redisClient && jobId) {
+            await redisClient.hSet(`discord_rag:job:${jobId}`, {
+                status: 'failed',
+                error: err.message,
+                completed_at: new Date().toISOString()
+            });
+        }
+    }
+}
+
+/**
+ * Poll Redis queue for manual triggers
+ */
+async function pollQueue() {
+    if (!redisClient) return;
+
+    try {
+        // BRPOP with 5 second timeout
+        const result = await redisClient.brPop(QUEUE_KEY, 5);
+
+        if (result) {
+            try {
+                const jobData = JSON.parse(result.element);
+                await processManualTrigger(jobData);
+            } catch (err) {
+                console.error('[Scheduler] Failed to parse job data:', err.message);
+            }
+        }
+    } catch (err) {
+        if (err.message !== 'Connection is closed.') {
+            console.error('[Scheduler] Queue poll error:', err.message);
+        }
+    }
+
+    // Continue polling
+    setImmediate(pollQueue);
+}
+
+/**
  * Main scheduled job with quiet period check and backoff
  */
 async function runScheduledJob(retriesRemaining = config.schedule.maxRetries) {
@@ -208,14 +391,33 @@ async function runScheduledJob(retriesRemaining = config.schedule.maxRetries) {
 }
 
 // Initialize
-discordClient.once('ready', () => {
+discordClient.once('ready', async () => {
     console.log(`[Scheduler] Discord client ready as ${discordClient.user.tag}`);
     console.log(`[Scheduler] Monitoring channels: ${config.channelIds.join(', ')}`);
     console.log(`[Scheduler] Schedule: ${config.schedule.cronExpression}`);
     console.log(`[Scheduler] Quiet period: ${config.schedule.quietPeriodMinutes} minutes`);
     console.log(`[Scheduler] Backoff: ${config.schedule.backoffMinutes} minutes`);
 
-    // Schedule the job
+    // Initialize Redis
+    await initRedis();
+
+    // Update status immediately
+    await updateBotStatus();
+
+    // Cache guild data
+    await cacheGuildData();
+
+    // Start heartbeat interval (every 30 seconds)
+    setInterval(updateBotStatus, 30000);
+
+    // Refresh guild cache every 5 minutes
+    setInterval(cacheGuildData, 5 * 60 * 1000);
+
+    // Start queue polling for manual triggers
+    console.log('[Scheduler] Starting queue listener for manual triggers...');
+    pollQueue();
+
+    // Schedule the cron job
     cron.schedule(config.schedule.cronExpression, () => {
         console.log(`[Scheduler] Cron triggered at ${new Date().toISOString()}`);
         runScheduledJob();
@@ -225,17 +427,20 @@ discordClient.once('ready', () => {
 });
 
 // Handle graceful shutdown
-process.on('SIGINT', async () => {
+async function shutdown() {
     console.log('[Scheduler] Shutting down...');
-    await discordClient.destroy();
-    process.exit(0);
-});
 
-process.on('SIGTERM', async () => {
-    console.log('[Scheduler] Shutting down...');
+    if (redisClient) {
+        await redisClient.hSet(STATUS_KEY, { status: 'offline' });
+        await redisClient.quit();
+    }
+
     await discordClient.destroy();
     process.exit(0);
-});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 // Start
 discordClient.login(config.token);

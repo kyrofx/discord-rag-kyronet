@@ -10,6 +10,9 @@ module.exports = {
         collection: process.env.MONGODB_COLLECTION
     },
 
+    // Redis (for manual trigger queue)
+    redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+
     // API
     apiBaseUrl: process.env.RAG_API_BASE_URL || 'http://discord_rag_api:8000',
     apiKey: process.env.API_KEY || '',
